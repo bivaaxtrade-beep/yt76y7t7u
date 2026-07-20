@@ -1,0 +1,22 @@
+{
+  "name": "Bivaax Trade",
+  "short_name": "Bivaax",
+  "description": "Professional Binary Trading Platform",
+  "start_url": "/trade",
+  "display": "standalone",
+  "background_color": "#1c1d22",
+  "theme_color": "#ffe24c",
+  "icons": [
+    {
+      "src": "https://i.postimg.cc/yYSDXHm2/IMG-20260421-WA0036(2).jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://i.postimg.cc/yYSDXHm2/IMG-20260421-WA0036(2).jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

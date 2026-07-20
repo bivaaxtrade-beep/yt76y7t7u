@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+Allow: /login
+Allow: /signup
+Allow: /register
+Allow: /about-us
+Allow: /affiliate
+Allow: /help-center
+Allow: /education
+Allow: /tournaments
+Allow: /promotions
+
+Disallow: /admin
+Disallow: /profile
+Disallow: /trade
+Disallow: /bivaaxpay
+Disallow: /crypto-deposit
+Disallow: /api/
+
+Sitemap: https://market.bivaax.trade/sitemap.xml

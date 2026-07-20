@@ -1,0 +1,40 @@
+export const tutorialTranslations: Record<string, any> = {
+  en: {
+    title: "What is Copy Trading and how to get started?",
+    p1: "Copy Trading is a modern investment method where you can directly follow the trading strategies of experienced traders in your account. When you copy an experienced trader, every trade they make will automatically execute in your account. It's a great way for new traders to learn trading and start investing without understanding market complexities.",
+    h1: "Why choose copy trading?",
+    l1_1: "Saves time: You don't need to sit in front of charts all day. Experienced traders will trade for you.",
+    l1_2: "Improves trading skills: You can easily understand the ins and outs of trading by watching the strategies of experts.",
+    l1_3: "Risk management: You can control risk by choosing your preferred traders.",
+    l1_4: "Automated trading: No hassle of opening or closing trades, everything is automated.",
+    h2: "Risks and precautions",
+    p2: "Although copy trading is profitable, it carries risks. Remember:",
+    l2_1: "Market risk: There is always a risk of loss in trading, even experts can face losses.",
+    l2_2: "Choosing the right trader: Don't just invest based on past performance, understand the trader's risk profile.",
+    l2_3: "Investment rule: It is safe to invest only a small portion of your total capital in copy trading.",
+    h3: "How to copy a trader?",
+    l3_1: "Go to our 'Traders' section.",
+    l3_2: "Check the win rate, total profit, and risk of different traders.",
+    l3_3: "Choose your preferred trader and click the 'Start Copying' button.",
+    l3_4: "Set the investment amount and turn on auto-copy."
+  },
+  bn: {
+    title: "কপি ট্রেডিং কী এবং কীভাবে শুরু করবেন?",
+    p1: "কপি ট্রেডিং (Copy Trading) হলো এমন একটি আধুনিক বিনিয়োগ পদ্ধতি, যেখানে আপনি অভিজ্ঞ ট্রেডারদের ট্রেডিং কৌশল সরাসরি নিজের অ্যাকাউন্টে অনুসরণ করতে পারেন। আপনি যখন কোনো অভিজ্ঞ ট্রেডারের কার্যক্রম কপি করবেন, তখন সেই ট্রেডারের প্রতিটি ট্রেড আপনার অ্যাকাউন্টেও স্বয়ংক্রিয়ভাবে কার্যকর হবে। এটি নতুন ট্রেডারদের জন্য ট্রেডিং শেখার এবং বাজারের জটিলতা না বুঝেই বিনিয়োগ শুরু করার একটি দারুণ উপায়।",
+    h1: "কেন কপি ট্রেডিং বেছে নেবেন?",
+    l1_1: "সময় বাঁচায়: আপনাকে সারাদিন চার্টের সামনে বসে থাকার প্রয়োজন নেই। অভিজ্ঞ ট্রেডাররা আপনার হয়ে ট্রেড করবে।",
+    l1_2: "ট্রেডিং দক্ষতা বাড়ায়: অভিজ্ঞদের কৌশল দেখে আপনি সহজেই ট্রেডিংয়ের খুঁটিনাটি বুঝতে পারবেন।",
+    l1_3: "ঝুঁকি ব্যবস্থাপনা: নিজের পছন্দমতো ট্রেডার নির্বাচন করে ঝুঁকি নিয়ন্ত্রণ করা সম্ভব।",
+    l1_4: "স্বয়ংক্রিয় ট্রেডিং: ট্রেড ওপেন করা বা ক্লোজ করার ঝামেলা নেই, সবকিছুই অটোমেটেড।",
+    h2: "কপি ট্রেডিংয়ের ঝুঁকি ও সতর্কতা",
+    p2: "কপি ট্রেডিং লাভজনক হলেও এতে ঝুঁকির সম্ভাবনা থাকে। মনে রাখবেন:",
+    l2_1: "বাজারের ঝুঁকি: ট্রেডিংয়ে সবসময় লসের ঝুঁকি থাকে, এমনকি অভিজ্ঞদেরও লস হতে পারে।",
+    l2_2: "সঠিক ট্রেডার নির্বাচন: শুধুমাত্র অতীত পারফরম্যান্স নয়, বরং ট্রেডারের ঝুঁকির ধরন বুঝে বিনিয়োগ করুন।",
+    l2_3: "বিনিয়োগের নিয়ম: আপনার মোট মূলধনের একটি ছোট অংশ কপি ট্রেডিংয়ে বিনিয়োগ করা নিরাপদ।",
+    h3: "কীভাবে ট্রেডার কপি করবেন?",
+    l3_1: "আমাদের 'ট্রেডারস' সেকশনে যান।",
+    l3_2: "বিভিন্ন ট্রেডারের উইন রেট, মোট লাভ এবং ঝুঁকি যাচাই করুন।",
+    l3_3: "আপনার পছন্দমতো ট্রেডার বেছে নিন এবং 'স্টার্ট কপিং' বাটনে ক্লিক করুন।",
+    l3_4: "বিনিয়োগের পরিমাণ নির্ধারণ করুন এবং অটো-কপি চালু করুন।"
+  }
+};

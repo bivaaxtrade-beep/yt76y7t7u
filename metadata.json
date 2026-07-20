@@ -1,0 +1,12 @@
+{
+  "name": "Bivaax",
+  "description": "A high-fidelity binary trading platform prototype inspired by Binomo, featuring a professional-grade dark interface, real-time interactive charts, and advanced trading controls.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API",
+    "MAJOR_CAPABILITY_CLOUD_SQL"
+  ]
+}
