@@ -29,6 +29,7 @@ const MFSDepositPage = lazy(() => import('./pages/MFSDepositPage'));
 const BkashDeposit = lazy(() => import('./pages/BkashDeposit'));
 const NagadDeposit = lazy(() => import('./pages/NagadDeposit'));
 const RocketDeposit = lazy(() => import('./pages/RocketDeposit'));
+const GoPayDepositPage = lazy(() => import('./pages/GoPayDepositPage'));
 const AuthPage = lazy(() => import('./pages/AuthPage'));
 const AffiliateLandingPage = lazy(() => import('./pages/AffiliateLanding'));
 
@@ -351,6 +352,7 @@ export default function App() {
               <Route path="/deposit/bkash" element={<RequireAuth><BkashDeposit /></RequireAuth>} />
               <Route path="/deposit/nagad" element={<RequireAuth><NagadDeposit /></RequireAuth>} />
               <Route path="/deposit/rocket" element={<RequireAuth><RocketDeposit /></RequireAuth>} />
+              <Route path="/deposit/gopay" element={<RequireAuth><GoPayDepositPage /></RequireAuth>} />
             </Routes>
           </Suspense>
           <SupportWidget />

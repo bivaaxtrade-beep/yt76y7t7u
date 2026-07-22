@@ -169,7 +169,7 @@ export default function ProfilePage() {
 
         setScanStep('Analyzing security features and physical card originality...');
 
-        const token = await auth.currentUser?.getIdToken();
+        const token = localStorage.getItem('bivax_token');
         const res = await fetch('/api/kyc/scan', {
           method: 'POST',
           headers: {

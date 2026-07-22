@@ -77,15 +77,16 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
             const userSub = onSnapshot(doc(db, 'users', user.uid), (userDoc) => {
                 if (userDoc.exists()) {
                     const data = userDoc.data();
-                    setUserBalance(data.balance || 0);
+                    const newBalance = data.balance || 0;
+                    setUserBalance(prev => prev !== newBalance ? newBalance : prev);
                     if (data.currency) {
-                        setUserCurrency(data.currency);
+                        setUserCurrency(prev => prev !== data.currency ? data.currency : prev);
                         try {
                             localStorage.setItem('user_display_currency', data.currency);
                         } catch(e) {}
                     }
                     if (data.language) {
-                        setUserLanguage(data.language);
+                        setUserLanguage(prev => prev !== data.language ? data.language : prev);
                     }
                 }
             });
@@ -94,7 +95,7 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
             const fetchCopies = async () => {
                 try {
                     const response = await fetch(`/api/users/${user.uid}/activeCopies`, {
-                        headers: { 'Authorization': `Bearer ${await user.getIdToken()}` }
+                        headers: { 'Authorization': `Bearer ${localStorage.getItem('bivax_token')}` }
                     });
                     if (response.ok) {
                         const data = await response.json();
@@ -238,7 +239,7 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
 
     setIsSubmitting(true);
     try {
-        const token = await auth.currentUser.getIdToken();
+        const token = localStorage.getItem('bivax_token');
         const response = await fetch(`/api/users/${auth.currentUser.uid}/activeCopies`, {
             method: 'POST',
             headers: { 
@@ -295,7 +296,7 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
     if (!confirmStop) return;
 
     try {
-        const token = await auth.currentUser.getIdToken();
+        const token = localStorage.getItem('bivax_token');
         const response = await fetch(`/api/users/${auth.currentUser.uid}/activeCopies/${copyId}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }

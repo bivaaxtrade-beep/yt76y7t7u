@@ -195,21 +195,47 @@ export async function initializeCandlesFromDB() {
             });
             runTx(oldCandles);
           } else {
-            // Seed brand new initial 5s candles (100 candles to provide background)
+            // Seed brand new initial 5s candles (2000 candles to provide background)
             console.log(`🌱 Seeding initial 5-second candles for ${pair} (${type})...`);
-            const basePrice = markets[pair].price;
-            const volatility = markets[pair].volatility || 0.0001;
-            const baseTime = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 5) - 100 * 5;
+            const basePrice = markets[pair].price || 100;
+            let volatility = markets[pair].volatility || 0.0002;
+            // Always convert absolute volatility to relative volatility
+            volatility = volatility / basePrice;
+            
+            // Adjust volatility for 5-second steps instead of 100ms ticks
+            // sigma * sqrt(dt) -> dt=5
+            const stepVol = volatility * Math.sqrt(5);
+            
+            const baseTime = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 5) - 2000 * 5;
             
             let currentPrice = basePrice;
             const seedRows = [];
-            for (let i = 0; i < 100; i++) {
+            for (let i = 0; i < 2000; i++) {
               const time = baseTime + i * 5;
               const open = currentPrice;
-              const change1 = (Math.random() - 0.5) * volatility * 2;
-              const close = currentPrice + change1;
-              const high = Math.max(open, close) + Math.abs(Math.random() * volatility);
-              const low = Math.min(open, close) - Math.abs(Math.random() * volatility);
+              
+              // Standard normal variate using Box-Muller transform
+              const u1 = Math.random() || 0.0001;
+              const u2 = Math.random();
+              const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+              
+            // Match live candle trend/drift magnitude
+            const trendPower = (Math.random() - 0.5) * 2;
+            const drift = trendPower * 0.0006 * 5; // Reduced drift
+            const shockMultiplier = 3.5; // Significantly increased shock for natural movement
+            const shock = z0 * stepVol * shockMultiplier;
+            
+            let close = open * Math.exp(drift + shock);
+            
+            // Wicks proportional to volatility and move
+            const move = Math.abs(close - open);
+            const wickVol = open * stepVol * 2.5; 
+            const maxExt = (move * Math.random() * 0.6) + (wickVol * Math.random());
+            const minExt = (move * Math.random() * 0.6) + (wickVol * Math.random());
+              
+              const high = Math.max(open, close) + maxExt;
+              const low = Math.min(open, close) - minExt;
+              
               const volume = Math.random() * 100 + 10;
               
               seedRows.push({
@@ -224,7 +250,14 @@ export async function initializeCandlesFromDB() {
                 openTime: time,
                 closeTime: time + 5
               });
+              
               currentPrice = close;
+              
+              // Simulate occasional gap-up/gap-down for realism (OTC markets have micro-gaps)
+              if (Math.random() < 0.15) {
+                 const gapSize = currentPrice * volatility * (Math.random() * 1.5 + 0.5);
+                 currentPrice += (Math.random() > 0.5 ? gapSize : -gapSize);
+              }
             }
 
             const insertStmt = db.prepare(`

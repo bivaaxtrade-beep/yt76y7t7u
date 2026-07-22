@@ -8,7 +8,7 @@ import {
   saveCandleToDB_v2, TIMEFRAMES, timeframeSecondsMap
 } from './marketService.ts';
 import { markets } from '../markets.ts';
-import { settleExpiredTrades } from './tradeService.ts';
+import { settleExpiredTrades, updateTradeExposureCache } from './tradeService.ts';
 import { updatePair } from './otcEngine.ts';
 
 const TICK_INTERVAL = 50;
@@ -30,6 +30,7 @@ export async function startMarketEngine() {
   setInterval(async () => {
     if (!systemActive) return;
     try {
+      await updateTradeExposureCache();
       await settleExpiredTrades();
     } catch (e) {
       console.error('Settlement error:', e);

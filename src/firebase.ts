@@ -13,12 +13,35 @@ export enum OperationType {
 export const auth = {
   get currentUser() {
     const user = localStorage.getItem('bivax_user');
-    return user ? JSON.parse(user) : null;
+    if (user) {
+      try {
+        const parsed = JSON.parse(user);
+        return {
+          ...parsed,
+          getIdToken: async () => localStorage.getItem('bivax_token') || ''
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
   },
   onAuthStateChanged: (callback: (user: any) => void) => {
     const handler = () => {
       const user = localStorage.getItem('bivax_user');
-      callback(user ? JSON.parse(user) : null);
+      if (user) {
+        try {
+          const parsed = JSON.parse(user);
+          callback({
+            ...parsed,
+            getIdToken: async () => localStorage.getItem('bivax_token') || ''
+          });
+        } catch (e) {
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
     };
     window.addEventListener('auth_change', handler);
     handler();
@@ -168,14 +191,25 @@ export const addDoc = async (colRef: any, data: any) => {
   }
 
   try {
+    const headers: any = { 'Content-Type': 'application/json' };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch(endpoint, {
       method,
-      headers: { 
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(data)
     });
+    
+    if (!res.ok) {
+      if (res.status === 401) {
+        clearAuth();
+      }
+      const errorText = await res.text();
+      throw new Error(`Proxy addDoc failed for ${name}: ${res.status} ${res.statusText} - ${errorText}`);
+    }
+    
     const result = await res.json();
     return { id: result.id || 'new-id' };
   } catch (err) {

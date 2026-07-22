@@ -17,6 +17,12 @@ import { currencies, formatWithCurrency, getCurrencySymbol } from '../lib/curren
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'react-hot-toast';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, LineChart, Line, Cell, BarChart, Bar 
+} from 'recharts';
+import { AssetLogo } from '../components/AssetLogo';
+import { MarketControlCard } from '../components/MarketControlCard';
 
 type Role = 'superadmin' | 'admin' | 'moderator' | 'support' | 'user';
 type PermissionKey = 'canManageUsers' | 'canManageStaff' | 'canManageFinance' | 'canManageContent' | 'canManageMarkets' | 'canManageSystem';
@@ -34,6 +40,8 @@ const INITIAL_PERMISSIONS: Record<PermissionKey, boolean> = {
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AdminTab>('market');
+  const [marketFilter, setMarketFilter] = useState<'all' | 'currencies' | 'otc' | 'crypto' | 'commodities'>('all');
+
   const [users, setUsers] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
@@ -355,7 +363,7 @@ export default function AdminDashboard() {
                 ? rawAdminEmail.toLowerCase().trim() 
                 : "hamproosapport@gmail.com";
             const userEmail = user.email?.toLowerCase();
-            const isSuperEmail = (adminEmail && userEmail === adminEmail) || userEmail === "hamproosapport@gmail.com" || userEmail === "hamproosupport@gmail.com" || user.uid === "HFvr43UhRiTSjb6m5sQJHmHGNvm1";
+            const isSuperEmail = (adminEmail && userEmail === adminEmail) || userEmail === "hamproosapport@gmail.com" || userEmail === "hamproosupport@gmail.com" || userEmail === "bivaaxtrade@gmail.com" || user.uid === "HFvr43UhRiTSjb6m5sQJHmHGNvm1";
             
             let adminData: any = null;
             let roleInDb: Role = 'user';
@@ -424,12 +432,15 @@ export default function AdminDashboard() {
                 setTickets(snap.docs.map(d => ({id: d.id, ...d.data()})));
             }));
             
+            const token = await user.getIdToken();
             await Promise.all([
                 fetchLists(),
                 fetchStaticAdminData(),
                 fetchMarketState(),
                 fetchBanners(),
-                fetch('/api/admin/config/fmp-key').then(res => res.ok ? res.json() : null).then(data => data && setFmpApiKey(data.fmpApiKey || ''))
+                fetch('/api/admin/config/fmp-key', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                }).then(res => res.ok ? res.json() : null).then(data => data && setFmpApiKey(data.fmpApiKey || ''))
             ]);
 
             setLoading(false);
@@ -476,7 +487,7 @@ export default function AdminDashboard() {
       ? rawAdminEmail.toLowerCase().trim() 
       : "hamproosapport@gmail.com";
   const currentUserEmail = auth.currentUser?.email?.toLowerCase();
-  const isOwner = (currentUserEmail === adminOwnerEmail) || currentUserEmail === "hamproosapport@gmail.com" || currentUserEmail === "hamproosupport@gmail.com" || auth.currentUser?.uid === "HFvr43UhRiTSjb6m5sQJHmHGNvm1";
+  const isOwner = (currentUserEmail === adminOwnerEmail) || currentUserEmail === "hamproosapport@gmail.com" || currentUserEmail === "hamproosupport@gmail.com" || currentUserEmail === "bivaaxtrade@gmail.com" || auth.currentUser?.uid === "HFvr43UhRiTSjb6m5sQJHmHGNvm1";
 
   const isSuper = userRole === 'superadmin';
   const isAdminPerm = isSuper || userRole === 'admin' || userPermissions.canManageSystem;
@@ -1392,14 +1403,19 @@ export default function AdminDashboard() {
            )}
 
             {activeTab === 'market' && (
-                <motion.div key="market" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
-                    <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
+                <motion.div key="market" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+                    {/* PROFESSIONAL HEADER */}
+                    <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                         <div className="space-y-1">
-                            <h2 className="text-3xl font-black text-white tracking-tight">Market <span className="text-yellow-500">Architect</span></h2>
-                            <p className="text-gray-500 text-sm font-medium">Override real-time algorithms and manually sculpt market movements with absolute precision.</p>
+                            <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+                                Market <span className="text-yellow-500">Architect</span>
+                                <div className="px-2 py-1 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[10px] uppercase font-black tracking-widest">v2.0 Professional</div>
+                            </h2>
+                            <p className="text-gray-500 text-sm font-medium">Manipulate algorithmic trajectories and define global market parameters with millisecond precision.</p>
                         </div>
-                        <div className="flex flex-wrap items-center gap-4">
-                            <button 
+                        
+                        <div className="flex flex-wrap items-center gap-3">
+                             <button 
                                 onClick={async () => {
                                     const active = !marketState?.systemActive;
                                     await fetch('/api/admin/market/system', {
@@ -1408,22 +1424,12 @@ export default function AdminDashboard() {
                                         body: JSON.stringify({ active })
                                     });
                                     fetchMarketState();
-                                    logAdminAction('global_market_status', `${active ? 'Activated' : 'Deactivated'} global market engine`);
                                 }}
-                                className={`px-6 py-3 rounded-2xl flex items-center gap-3 transition-all ${marketState?.systemActive ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}
+                                className={`px-6 py-3 rounded-2xl flex items-center gap-3 transition-all border font-black uppercase text-[10px] tracking-widest ${marketState?.systemActive ? 'bg-green-500 border-green-500 text-black shadow-lg shadow-green-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20'}`}
                             >
                                 <Power size={18} />
-                                <span className="text-xs font-black uppercase tracking-widest leading-none pt-0.5">
-                                    Engine: {marketState?.systemActive ? 'Active' : 'Paused'}
-                                </span>
+                                Engine: {marketState?.systemActive ? 'Active' : 'Offline'}
                             </button>
-
-                            <div className="bg-[#1a1a1a] border border-white/5 px-6 py-3 rounded-2xl flex items-center gap-3">
-                               <Snowflake size={18} className={Object.values(marketState?.markets || {}).some((m: any) => m.isFrozen) ? 'text-blue-400' : 'text-gray-600'} />
-                               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none pt-0.5">
-                                   Frozen: {Object.values(marketState?.markets || {}).filter((m: any) => m.isFrozen).length}
-                               </span>
-                            </div>
 
                             <button 
                                 onClick={async () => {
@@ -1435,433 +1441,104 @@ export default function AdminDashboard() {
                                         }
                                     }
                                 }}
-                                className="bg-white/5 hover:bg-white/10 border border-white/5 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest"
+                                className="bg-white/5 hover:bg-white/10 border border-white/5 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
                             >
-                                Unfreeze All
+                                Force Global Thaw
                             </button>
                         </div>
                     </header>
-                    
-                    {/* GLOBAL MANIPULATION CENTER */}
-                    <div className="bg-red-500/5 border border-red-500/10 p-6 md:p-8 rounded-[40px] mb-10 relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 w-64 h-64 bg-red-500/5 blur-[80px] rounded-full -mr-32 -mt-32" />
-                        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-                            <div className="flex items-center gap-6">
-                                <div className="w-16 h-16 rounded-[24px] bg-red-500/10 flex items-center justify-center text-red-500 shadow-inner">
-                                    <Zap size={32} />
+
+                    {/* GLOBAL PROTOCOL CENTER */}
+                    <div className="bg-[#0a0a0f] border border-white/5 rounded-[40px] p-8 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-500/5 blur-[80px] rounded-full -mr-32 -mt-32" />
+                        <div className="relative z-10 flex flex-col xl:flex-row items-center justify-between gap-10">
+                            <div className="flex items-center gap-6 max-w-md">
+                                <div className="w-16 h-16 rounded-[24px] bg-yellow-500/10 flex items-center justify-center text-yellow-500 shadow-inner shrink-0">
+                                    <Shield size={32} />
                                 </div>
                                 <div className="space-y-1">
-                                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Global Manipulation Protocol</h3>
-                                    <p className="text-gray-500 text-sm">Force outcomes for ALL active trades across all markets simultaneously.</p>
+                                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Global Manipulation Center</h3>
+                                    <p className="text-gray-500 text-sm leading-relaxed">Override natural market flow across ALL assets simultaneously. Select a protocol to force platform-wide outcomes.</p>
                                 </div>
                             </div>
                             
-                            <div className="flex flex-wrap items-center gap-3 bg-black/40 p-2 rounded-[28px] border border-white/5">
+                            <div className="flex flex-wrap items-center justify-center gap-3 p-2 bg-black/40 rounded-[32px] border border-white/5">
                                 {[
-                                    { id: 'neutral', label: 'Neutral (Natural)', color: 'text-gray-400', icon: RefreshCw },
-                                    { id: 'smart_house', label: 'Smart House (Auto Profit)', color: 'text-yellow-500', icon: Cpu },
-                                    { id: 'always_loss', label: 'House Win (Force Loss)', color: 'text-red-500', icon: TrendingDown },
-                                    { id: 'always_win', label: 'Client Win (Force Win)', color: 'text-green-500', icon: TrendingUp }
+                                    { id: 'neutral', label: 'Natural Flow', icon: RefreshCw, desc: 'Real Algorithm' },
+                                    { id: 'smart_house', label: 'Smart House', icon: Cpu, desc: 'Auto Profit' },
+                                    { id: 'always_loss', label: 'House Win', icon: TrendingDown, desc: 'Force Loss' },
+                                    { id: 'always_win', label: 'Client Win', icon: TrendingUp, desc: 'Force Win' }
                                 ].map((mode) => (
                                     <button
                                         key={mode.id}
                                         onClick={async () => {
-                                            const res = await fetch('/api/admin/market/global-manipulation', {
+                                            const res = await fetch('/api/admin/manipulation/global', {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({ mode: mode.id })
                                             });
-                                            if (res.ok) {
-                                                logAdminAction('global_manipulation', `Set global manipulation mode to: ${mode.id}`);
-                                            }
+                                            if (res.ok) fetchMarketState();
                                         }}
-                                        className={`flex items-center gap-2.5 px-6 py-3 rounded-[20px] transition-all relative ${
+                                        className={`flex flex-col items-center gap-2 px-6 py-4 rounded-[24px] transition-all min-w-[140px] relative border ${
                                             (marketState?.globalManipulationMode || 'neutral') === mode.id 
-                                                ? 'bg-white text-black font-black shadow-xl shadow-white/5' 
-                                                : 'text-gray-500 hover:text-white hover:bg-white/5'
+                                                ? 'bg-white border-white text-black font-black shadow-2xl shadow-white/10' 
+                                                : 'bg-white/5 border-transparent text-gray-500 hover:text-white hover:bg-white/10'
                                         }`}
                                     >
-                                        <mode.icon size={16} />
-                                        <span className="text-[11px] uppercase tracking-widest leading-none pt-0.5">{mode.label}</span>
-                                        {(marketState?.globalManipulationMode || 'neutral') === mode.id && (
-                                            <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                                        )}
+                                        <mode.icon size={20} className={ (marketState?.globalManipulationMode || 'neutral') === mode.id ? '' : 'opacity-50' } />
+                                        <div className="text-center">
+                                            <p className="text-[10px] uppercase tracking-widest">{mode.label}</p>
+                                            <p className={`text-[8px] opacity-50 font-medium ${(marketState?.globalManipulationMode || 'neutral') === mode.id ? 'text-black' : 'text-gray-400'}`}>{mode.desc}</p>
+                                        </div>
                                     </button>
                                 ))}
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-yellow-500/5 border border-yellow-500/10 p-6 rounded-[32px] mb-10 flex flex-col md:flex-row items-center justify-between gap-6">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 flex items-center justify-center text-yellow-500">
-                                <Shield size={24} />
-                            </div>
-                            <div>
-                                <h3 className="font-black text-white uppercase tracking-tight">Risk Management Limits</h3>
-                                <p className="text-gray-500 text-xs">Set global trading limits per asset to prevent excessive exposure.</p>
-                            </div>
+                    {/* MARKET FILTERING & TOOLS */}
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 pb-2">
+                        <div className="flex items-center gap-2 p-1.5 bg-white/5 rounded-2xl border border-white/5">
+                            {['all', 'currencies', 'otc', 'crypto', 'commodities'].map((f: any) => (
+                                <button
+                                    key={f}
+                                    onClick={() => setMarketFilter(f)}
+                                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${marketFilter === f ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/10' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+                                >
+                                    {f}
+                                </button>
+                            ))}
                         </div>
-                        <div className="flex gap-4">
-                            <div className="space-y-1">
-                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Global Max Trade (৳)</label>
-                                <input 
-                                    type="number" 
-                                    value={appConfig.globalMaxTrade || 50000}
-                                    onChange={e => setAppConfig({ ...appConfig, globalMaxTrade: Number(e.target.value) })}
-                                    className="bg-[#15161d] border border-white/5 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-yellow-500"
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Global Min Trade (৳)</label>
-                                <input 
-                                    type="number" 
-                                    value={appConfig.globalMinTrade || 100}
-                                    onChange={e => setAppConfig({ ...appConfig, globalMinTrade: Number(e.target.value) })}
-                                    className="bg-[#15161d] border border-white/5 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-yellow-500"
-                                />
+                        
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 px-4 py-2.5 bg-white/5 rounded-xl border border-white/5">
+                                <Activity size={14} className="text-green-500" />
+                                <span className="text-[10px] font-black text-white uppercase tracking-widest">System Load: 12ms</span>
                             </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {marketState?.markets && Object.entries(marketState.markets).map(([pair, data]: any) => (
-                            <div key={pair} className="bg-[#0a0a0f] border border-white/5 rounded-[40px] p-8 space-y-8 hover:border-white/10 transition-all group">
-                                <div className="flex justify-between items-start">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-14 h-14 rounded-2xl bg-[#15161d] flex items-center justify-center text-xl font-black border border-white/5 overflow-hidden">
-                                           {/* Need to ensure AssetLogo is used if available, or fallback */}
-                                            <div className="flex items-center justify-center w-full h-full scale-[0.6]">
-                                                {/* Fallback to text if AssetLogo not in scope but it should be */}
-                                                <span className="text-gray-400">{pair.split('/')[0].substring(0, 2)}</span>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <h4 className="text-lg font-black text-white">{pair}</h4>
-                                            <p className="text-yellow-500 font-mono text-sm leading-none mt-1">৳{data.price.toFixed(5)}</p>
-                                            <div className="flex items-center gap-4 mt-3">
-                                                <div className="space-y-0.5">
-                                                    <p className="text-[8px] font-black text-gray-600 uppercase tracking-widest">Min Trade</p>
-                                                    <input 
-                                                        type="number" 
-                                                        value={data.minTrade || appConfig.globalMinTrade || 100}
-                                                        onChange={e => updateMarket(pair, { minTrade: Number(e.target.value) })}
-                                                        className="w-20 bg-white/5 border border-white/5 rounded-lg px-2 py-1 text-[10px] text-white outline-none focus:border-yellow-500"
-                                                    />
-                                                </div>
-                                                <div className="space-y-0.5">
-                                                    <p className="text-[8px] font-black text-gray-600 uppercase tracking-widest">Max Trade</p>
-                                                    <input 
-                                                        type="number" 
-                                                        value={data.maxTrade || appConfig.globalMaxTrade || 50000}
-                                                        onChange={e => updateMarket(pair, { maxTrade: Number(e.target.value) })}
-                                                        className="w-24 bg-white/5 border border-white/5 rounded-lg px-2 py-1 text-[10px] text-white outline-none focus:border-yellow-500"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3 mt-6">
-                                     <button 
-                                       onClick={() => updateMarket(pair, { pump: true })}
-                                       className="flex items-center justify-center gap-2 py-3 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-black rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border border-green-500/20 active:scale-95"
-                                     >
-                                         <TrendingUp size={14} /> Quick Pump
-                                     </button>
-                                     <button 
-                                       onClick={() => updateMarket(pair, { dump: true })}
-                                       className="flex items-center justify-center gap-2 py-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border border-red-500/20 active:scale-95"
-                                     >
-                                         <TrendingDown size={14} /> Quick Dump
-                                     </button>
-                                 </div>
-
-                                 <div className="flex gap-1.5 p-1 bg-[#15161d] rounded-xl border border-white/5 mt-4">
-                                       {[
-                                         { key: 'up', icon: TrendingUp },
-                                         { key: 'random', icon: RefreshCcw },
-                                         { key: 'down', icon: TrendingDown }
-                                       ].map(t => (
-                                           <button 
-                                             key={t.key} onClick={() => updateMarket(pair, { trend: t.key })}
-                                             className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${data.trend === t.key ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/10' : 'text-gray-600 hover:text-white'}`}
-                                           >
-                                               <t.icon size={16}/>
-                                           </button>
-                                       ))}
-                                       <div className="w-[1px] h-4 bg-white/10 mx-1 self-center" />
-                                       <button 
-                                         onClick={() => updateMarket(pair, { isFrozen: !data.isFrozen })}
-                                         className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${data.isFrozen ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/10' : 'text-gray-600 hover:text-white'}`}
-                                         title={data.isFrozen ? "Unfreeze Market" : "Freeze Market"}
-                                       >
-                                           <Snowflake size={16} />
-                                       </button>
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button 
-                                      onClick={() => updateMarket(pair, { priceAction: 'pump' })} 
-                                      className="flex flex-col items-center justify-center gap-2 p-5 bg-green-500/10 border border-green-500/20 rounded-3xl text-green-500 hover:bg-green-500 hover:text-black transition-all group"
-                                    >
-                                        <ArrowUpRight size={20} className="group-hover:scale-125 transition-transform" />
-                                        <span className="text-[10px] font-black uppercase tracking-widest pt-1">Execute Pump</span>
-                                    </button>
-                                    <button 
-                                      onClick={() => updateMarket(pair, { priceAction: 'dump' })} 
-                                      className="flex flex-col items-center justify-center gap-2 p-5 bg-red-500/10 border border-red-500/20 rounded-3xl text-red-500 hover:bg-red-500 hover:text-white transition-all group"
-                                    >
-                                        <TrendingDown size={20} className="group-hover:scale-125 transition-transform" />
-                                        <span className="text-[10px] font-black uppercase tracking-widest pt-1">Execute Dump</span>
-                                    </button>
-                                </div>
-
-                                <div className="p-4 bg-[#15161d] rounded-2xl border border-yellow-500/10 space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <Shield size={14} className="text-yellow-500" />
-                                            <span className="text-[10px] font-black uppercase text-yellow-500 tracking-widest">Manipulation Protocol</span>
-                                        </div>
-                                        <button 
-                                          onClick={() => fetch('/api/admin/market/manipulation', {
-                                              method: 'POST',
-                                              headers: { 'Content-Type': 'application/json' },
-                                              body: JSON.stringify({ 
-                                                  pair, 
-                                                  targetTrend: data.manipulation?.targetTrend || 'random', 
-                                                  profitPercentage: data.manipulation?.profitPercentage || 0, 
-                                                  enabled: !data.manipulation?.enabled,
-                                                  mode: data.manipulation?.mode || 'percentage'
-                                              })
-                                          }).then(fetchMarketState)}
-                                          className={`w-10 h-5 rounded-full flex items-center p-0.5 transition-colors ${data.manipulation?.enabled ? 'bg-yellow-500 justify-end' : 'bg-gray-700'}`}
-                                        >
-                                            <div className="w-4 h-4 rounded-full bg-white shadow-sm" />
-                                        </button>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <div className="flex flex-col gap-1">
-                                            <label className="text-[8px] font-black text-gray-500 uppercase tracking-widest leading-none">Operation Mode</label>
-                                            <select 
-                                                value={data.manipulation?.mode || 'percentage'}
-                                                onChange={e => fetch('/api/admin/market/manipulation', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ 
-                                                        pair, 
-                                                        targetTrend: data.manipulation?.targetTrend || 'random', 
-                                                        profitPercentage: data.manipulation?.profitPercentage || 0, 
-                                                        enabled: data.manipulation?.enabled || false,
-                                                        mode: e.target.value
-                                                    })
-                                                }).then(fetchMarketState)}
-                                                className="w-full bg-[#0a0a0f] border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-white focus:border-yellow-500 outline-none"
-                                            >
-                                                <option value="percentage">Direct Trend (%)</option>
-                                                <option value="smart_house">Smart House (Auto-Balance)</option>
-                                                <option value="always_loss">Always Loss (Force House Win)</option>
-                                                <option value="always_win">Always Win (Force Trader Win)</option>
-                                            </select>
-                                        </div>
-
-                                        {(data.manipulation?.mode === 'percentage' || !data.manipulation?.mode) && (
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[8px] font-black text-gray-500 uppercase tracking-widest leading-none">Trend</label>
-                                                    <select 
-                                                        value={data.manipulation?.targetTrend || 'random'}
-                                                        onChange={e => fetch('/api/admin/market/manipulation', {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({ 
-                                                                pair, 
-                                                                targetTrend: e.target.value, 
-                                                                profitPercentage: data.manipulation?.profitPercentage || 0, 
-                                                                enabled: data.manipulation?.enabled || false,
-                                                                mode: data.manipulation?.mode || 'percentage'
-                                                            })
-                                                        }).then(fetchMarketState)}
-                                                        className="bg-[#0a0a0f] border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-white focus:border-yellow-500 outline-none"
-                                                    >
-                                                        <option value="up">UP</option>
-                                                        <option value="down">DOWN</option>
-                                                        <option value="random">RANDOM</option>
-                                                    </select>
-                                                </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[8px] font-black text-gray-500 uppercase tracking-widest leading-none">Intensity (%)</label>
-                                                    <input 
-                                                        type="number"
-                                                        value={data.manipulation?.profitPercentage || 0}
-                                                        onChange={e => fetch('/api/admin/market/manipulation', {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({ 
-                                                                pair, 
-                                                                targetTrend: data.manipulation?.targetTrend || 'random', 
-                                                                profitPercentage: Number(e.target.value), 
-                                                                enabled: data.manipulation?.enabled || false,
-                                                                mode: data.manipulation?.mode || 'percentage'
-                                                            })
-                                                        }).then(fetchMarketState)}
-                                                        className="bg-[#0a0a0f] border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-white focus:border-yellow-500 outline-none"
-                                                        placeholder="%"
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <input 
-                                   type="number" 
-                                   step="0.00001"
-                                   placeholder={data.price.toFixed(5)}
-                                   className="w-full bg-[#15161d] border border-white/5 rounded-2xl px-4 py-3 text-sm focus:border-yellow-500 outline-none text-white my-2"
-                                   onKeyPress={(e: any) => {
-                                       if (e.key === 'Enter') {
-                                           updateMarket(pair, { setPrice: e.target.value });
-                                           e.target.value = '';
-                                       }
-                                   }}
+                    {/* MARKET ARCHITECT GRID */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {marketState?.markets && Object.entries(marketState.markets)
+                            .filter(([pair]: any) => {
+                                if (marketFilter === 'all') return true;
+                                if (marketFilter === 'currencies') return pair.includes('/') && !pair.includes('OTC');
+                                if (marketFilter === 'otc') return pair.includes('OTC');
+                                if (marketFilter === 'crypto') return pair === 'BTC/USD' || pair === 'ETH/USD' || pair === 'SOL/USD';
+                                if (marketFilter === 'commodities') return pair === 'GOLD' || pair === 'SILVER' || pair === 'OIL';
+                                return true;
+                            })
+                            .map(([pair, data]: any) => (
+                                <MarketControlCard 
+                                    key={pair} 
+                                    pair={pair} 
+                                    data={data} 
+                                    updateMarket={updateMarket} 
+                                    appConfig={appConfig}
+                                    fetchMarketState={fetchMarketState}
                                 />
-                                <div className="flex items-center justify-between gap-4 p-4 bg-[#15161d] rounded-2xl border border-white/5">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-red-500">Hide from UI</span>
-                                    <button 
-                                      onClick={() => updateMarket(pair, { hidden: !data.hidden })}
-                                      className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 ${data.hidden ? 'bg-red-500 justify-end' : 'bg-gray-600 justify-start'}`}
-                                    >
-                                        <div className="w-4 h-4 rounded-full bg-white" />
-                                    </button>
-                                </div>
-                                <div className="flex items-center justify-between gap-4 p-4 bg-[#15161d] rounded-2xl border border-white/5 mt-2">
-                                    <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Asset Active</span>
-                                    <button 
-                                      onClick={() => updateMarket(pair, { active: !data.active })}
-                                      className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 ${data.active ? 'bg-green-500 justify-end' : 'bg-gray-600 justify-start'}`}
-                                    >
-                                        <div className="w-4 h-4 rounded-full bg-white" />
-                                    </button>
-                                </div>
-                                <div className="flex items-center justify-between gap-4 p-4 bg-[#15161d] rounded-2xl border border-white/5 mt-2">
-                                    <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Freeze Price</span>
-                                    <button 
-                                      onClick={() => updateMarket(pair, { isFrozen: !data.isFrozen })}
-                                      className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 ${data.isFrozen ? 'bg-blue-600 justify-end' : 'bg-gray-600 justify-start'}`}
-                                    >
-                                        <div className="w-4 h-4 rounded-full bg-white" />
-                                    </button>
-                                </div>
-
-                                {data.isFrozen && (
-                                    <div className="p-4 bg-[#15161d] rounded-2xl border border-white/5 space-y-3 mb-2">
-                                        <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest block font-sans">Freeze Reason</span>
-                                        <div className="flex gap-2">
-                                            {['volatility', 'maintenance'].map((reason) => {
-                                                const isActive = (data.freezeReason || 'volatility') === reason;
-                                                return (
-                                                    <button
-                                                        key={reason}
-                                                        onClick={() => updateMarket(pair, { freezeReason: reason })}
-                                                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold capitalize transition-all border ${
-                                                            isActive 
-                                                                ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' 
-                                                                 : 'bg-transparent text-gray-500 border-white/5 hover:text-white hover:border-white/10'
-                                                        }`}
-                                                    >
-                                                        {reason}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="space-y-3 p-4 bg-[#15161d] rounded-2xl border border-white/5 relative group/pressure">
-                                    <button 
-                                        onClick={() => {
-                                            if (confirm(`Reset pressure for ${pair}?`)) {
-                                                fetch('/api/admin/market/reset-pressure', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ pair })
-                                                }).then(fetchMarketState);
-                                            }
-                                        }}
-                                        className="absolute top-2 right-2 p-1.5 bg-[#0a0a0f] text-gray-500 hover:text-yellow-500 rounded-lg opacity-0 group-hover/pressure:opacity-100 transition-all border border-white/5"
-                                        title="Reset Volume Control"
-                                    >
-                                        <RefreshCw size={12} />
-                                    </button>
-                                    <div className="flex justify-between items-center text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                                        <span>Total Volume UP</span>
-                                        <span className="text-green-500 font-mono">৳{(data.totalUp || 0).toLocaleString()}</span>
-                                    </div>
-                                    <div className="w-full h-1 bg-gray-900 rounded-full overflow-hidden mt-1 mb-2">
-                                        <div 
-                                            className="h-full bg-green-500 transition-all duration-500" 
-                                            style={{ width: `${(data.totalUp + data.totalDown) > 0 ? (data.totalUp / (data.totalUp + data.totalDown)) * 100 : 50}%` }}
-                                        />
-                                    </div>
-                                    <div className="flex justify-between items-center text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                                        <span>Total Volume DOWN</span>
-                                        <span className="text-red-500 font-mono">৳{(data.totalDown || 0).toLocaleString()}</span>
-                                    </div>
-                                    <div className="w-full h-1 bg-gray-900 rounded-full overflow-hidden mt-1">
-                                        <div 
-                                            className="h-full bg-red-500 transition-all duration-500" 
-                                            style={{ width: `${(data.totalUp + data.totalDown) > 0 ? (data.totalDown / (data.totalUp + data.totalDown)) * 100 : 50}%` }}
-                                        />
-                                    </div>
-                                    <input 
-                                       type="number"
-                                       placeholder={`House Edge: ${data.houseEdge || 10}%`}
-                                       className="w-full bg-[#0a0a0f] border border-white/5 rounded-xl px-4 py-2 text-xs focus:border-yellow-500 outline-none text-white my-2"
-                                       onKeyPress={(e: any) => {
-                                           if (e.key === 'Enter') {
-                                               updateMarket(pair, { houseEdge: e.target.value });
-                                               e.target.value = '';
-                                           }
-                                       }}
-                                    />
-                                </div>
-
-                                <div className="space-y-6 pt-6 border-t border-white/5">
-                                   <div className="space-y-3">
-                                       <div className="flex justify-between items-center text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                                           <span>Market Pressure</span>
-                                           <span className="text-yellow-500 font-mono">{(data.volatility * 1000).toFixed(2)} pts</span>
-                                       </div>
-                                       <input 
-                                         type="range" min="0.00001" max="0.1" step="0.0001" value={data.volatility}
-                                         onChange={e => updateMarket(pair, { volatility: parseFloat(e.target.value) })}
-                                         className="w-full h-1.5 bg-[#15161d] rounded-full appearance-none accent-yellow-500 cursor-pointer"
-                                       />
-                                   </div>
-
-                                   <div className="space-y-3">
-                                       <div className="flex justify-between items-center text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                                           <span>System Yield Rate</span>
-                                           <span className="text-white bg-white/5 px-2 py-0.5 rounded-lg">{data.payout}%</span>
-                                       </div>
-                                       <input 
-                                         type="range" min="10" max="98" step="1" value={data.payout}
-                                         onChange={e => updateMarket(pair, { payout: parseInt(e.target.value) })}
-                                         className="w-full h-1.5 bg-[#15161d] rounded-full appearance-none accent-yellow-500 cursor-pointer"
-                                       />
-                                   </div>
-
-                                   <button 
-                                     onClick={() => updateMarket(pair, { priceAction: 'neutral' })}
-                                     className="w-full py-4 bg-[#15161d] text-gray-500 hover:text-white hover:bg-white/5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border border-transparent hover:border-white/5"
-                                   >
-                                      Normalize Frequency
-                                   </button>
-                                </div>
-                            </div>
-                        ))}
+                            ))}
                     </div>
                 </motion.div>
             )}
@@ -1983,6 +1660,72 @@ export default function AdminDashboard() {
                                   onChange={e => setFmpApiKey(e.target.value)}
                                   className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none font-mono text-sm"
                                 />
+                            </div>
+                        </div>
+
+                        <div className="space-y-6 pt-4 border-t border-white/5">
+                            <h3 className="text-sm font-black uppercase tracking-widest text-gray-400">SMTP Email Settings</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">SMTP Host (e.g. mail.yourdomain.com)</label>
+                                    <input 
+                                      type="text" 
+                                      placeholder="smtp.example.com" 
+                                      value={appConfig.smtpHost || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpHost: e.target.value})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">SMTP Port (465, 587)</label>
+                                    <input 
+                                      type="number" 
+                                      placeholder="465" 
+                                      value={appConfig.smtpPort || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpPort: Number(e.target.value)})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">SMTP Username / Email</label>
+                                    <input 
+                                      type="text" 
+                                      placeholder="support@domain.com" 
+                                      value={appConfig.smtpUser || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpUser: e.target.value})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">SMTP Password</label>
+                                    <input 
+                                      type="password" 
+                                      placeholder="••••••••" 
+                                      value={appConfig.smtpPass || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpPass: e.target.value})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">From Email Address</label>
+                                    <input 
+                                      type="text" 
+                                      placeholder="noreply@domain.com" 
+                                      value={appConfig.smtpFromEmail || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpFromEmail: e.target.value})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black uppercase text-gray-500">From Name</label>
+                                    <input 
+                                      type="text" 
+                                      placeholder="Bivaax Support" 
+                                      value={appConfig.smtpFromName || ""} 
+                                      onChange={e => setAppConfig({...appConfig, smtpFromName: e.target.value})}
+                                      className="w-full bg-[#15161d] border border-[#1a1a24] rounded-3xl px-6 py-4 focus:border-yellow-500 outline-none text-sm"
+                                    />
+                                </div>
                             </div>
                         </div>
 
@@ -2359,9 +2102,13 @@ export default function AdminDashboard() {
                         <div className="pt-8">
                            <button onClick={async () => {
                                try {
+                                   const token = await auth.currentUser?.getIdToken?.();
                                    await fetch('/api/admin/config/fmp-key', {
                                        method: 'POST',
-                                       headers: { 'Content-Type': 'application/json' },
+                                       headers: { 
+                                           'Content-Type': 'application/json',
+                                           'Authorization': `Bearer ${token}`
+                                       },
                                        body: JSON.stringify({ fmpApiKey })
                                    });
                                } catch (err) {

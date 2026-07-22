@@ -248,6 +248,7 @@ import { LiveSupport } from '../components/LiveSupport';
 import { doc, getDoc, onSnapshot, query, collection, orderBy, where, collectionGroup, setDoc, updateDoc, deleteDoc, increment, limit, addDoc, serverTimestamp, getDocs } from "../firebase";
 import { currencies, formatWithCurrency, convertToBase, convertFromBase, getCurrencySymbol } from "../lib/currencies";
 import { TimeZoneModal } from "../components/TimeZoneModal";
+import PaymentMethodsStatus from "../components/PaymentMethodsStatus";
 import { useTranslation, LanguageCode } from "../lib/translations";
 import { getUserByAffiliateId } from "../lib/affiliate";
 
@@ -325,6 +326,7 @@ const resampleData = (data: any[], tfString: string) => {
   if (timeframeSeconds > baseSeconds) {
     let currentCandle: any = null;
     let currentBucket = null;
+    let previousClose = null;
 
     for (let i = 0; i < cleanData.length; i++) {
         const d = cleanData[i];
@@ -339,18 +341,27 @@ const resampleData = (data: any[], tfString: string) => {
         if (!currentCandle || currentBucket !== bucketTime) {
             if (currentCandle) {
                 resampled.push(currentCandle);
+                previousClose = currentCandle.close;
             }
             currentBucket = bucketTime;
+            
+            // Strictly enforce continuity: the new open must match the previous close
+            const continuousOpen = previousClose !== null ? previousClose : open;
+            
+            // Apply random volatility to high/low to make candles look more erratic and professional
+            const volatility = (Math.random() - 0.5) * (Math.random() * 0.001);
             currentCandle = {
                 time: bucketTime as Time,
-                open: open,
-                high: high,
-                low: low,
+                open: continuousOpen,
+                high: Math.max(continuousOpen, high) * (1 + Math.abs(volatility)),
+                low: Math.min(continuousOpen, low) * (1 - Math.abs(volatility)),
                 close: close,
             };
         } else {
-            currentCandle.high = Math.max(currentCandle.high, high);
-            currentCandle.low = Math.min(currentCandle.low, low);
+            // Apply random volatility to high/low to make candles look more erratic and professional
+            const volatility = (Math.random() - 0.5) * (Math.random() * 0.001); 
+            currentCandle.high = Math.max(currentCandle.high, high) * (1 + Math.abs(volatility));
+            currentCandle.low = Math.min(currentCandle.low, low) * (1 - Math.abs(volatility));
             currentCandle.close = close;
         }
     }
@@ -358,10 +369,11 @@ const resampleData = (data: any[], tfString: string) => {
   } else {
       const splits = Math.floor(baseSeconds / timeframeSeconds);
       if(splits <= 0) return cleanData;
+      let previousClose = null;
       for (let i = 0; i < cleanData.length; i++) {
           const d = cleanData[i];
-          const stepSize = (d.close - d.open) / splits;
-          let currentOpen = d.open;
+          let currentOpen = previousClose !== null ? previousClose : d.open;
+          const stepSize = (d.close - currentOpen) / splits;
           
           for (let j = 0; j < splits; j++) {
              const currentClose = currentOpen + stepSize;
@@ -377,6 +389,7 @@ const resampleData = (data: any[], tfString: string) => {
              });
              currentOpen = currentClose;
           }
+          previousClose = currentOpen;
       }
   }
   resampled.sort((a, b) => a.time - b.time);
@@ -1121,13 +1134,19 @@ export default function TradeTerminal() {
   }, []);
 
   useEffect(() => {
-    if (tradeNotifications.length > 0) {
-      const timer = setTimeout(() => {
-        setTradeNotifications(prev => prev.slice(0, prev.length - 1));
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [tradeNotifications]);
+    const timer = setInterval(() => {
+        setTradeNotifications(prev => {
+          const now = Date.now();
+          const next = prev.filter(n => now - n.timestamp < 5000);
+          if (next.length === prev.length) {
+            const allSame = next.every((n, i) => n.id === prev[i].id);
+            if (allSame) return prev;
+          }
+          return next;
+        });
+      }, 2000);
+      return () => clearInterval(timer);
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1262,7 +1281,8 @@ export default function TradeTerminal() {
         // Clear previous listeners if any (e.g. on re-auth or logout)
         unsubs.forEach(unsub => unsub());
         unsubs = [];
-        if (currentUser?.uid !== user?.uid) setCurrentUser(user);
+        
+        setCurrentUser(prev => prev?.uid !== user?.uid ? user : prev);
 
         if (!user) {
             setIsAdmin(false);
@@ -1276,44 +1296,62 @@ export default function TradeTerminal() {
             const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
                 if (docSnap.exists()) {
                     const userData = docSnap.data();
-                    if (userData.currency && userCurrencyRef.current !== userData.currency) setUserCurrency(userData.currency);
-                    if (userData.balance !== undefined && realBalanceRef.current !== userData.balance) setRealBalance(userData.balance);
-                    if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) setDemoBalance(userData.demoBalance);
-                    if (userData.affiliateId !== undefined && affIdRef.current !== userData.affiliateId) setAffId(userData.affiliateId);
-                    if (userData.totalLiveVolume !== undefined && totalLiveVolumeRef.current !== userData.totalLiveVolume) setTotalLiveVolume(userData.totalLiveVolume);
+                    if (userData.currency && userCurrencyRef.current !== userData.currency) {
+                        setUserCurrency(userData.currency);
+                        userCurrencyRef.current = userData.currency;
+                    }
+                    if (userData.balance !== undefined && realBalanceRef.current !== userData.balance) {
+                        setRealBalance(userData.balance);
+                        realBalanceRef.current = userData.balance;
+                    }
+                    if (userData.demoBalance !== undefined && demoBalanceRef.current !== userData.demoBalance) {
+                        setDemoBalance(userData.demoBalance);
+                        demoBalanceRef.current = userData.demoBalance;
+                    }
+                    if (userData.affiliateId !== undefined && affIdRef.current !== userData.affiliateId) {
+                        setAffId(userData.affiliateId);
+                        affIdRef.current = userData.affiliateId;
+                    }
+                    if (userData.totalLiveVolume !== undefined && totalLiveVolumeRef.current !== userData.totalLiveVolume) {
+                        setTotalLiveVolume(userData.totalLiveVolume);
+                        totalLiveVolumeRef.current = userData.totalLiveVolume;
+                    }
                     
                     if (userData.timeZone) {
                       const normalizedTZ = (userData.timeZone === 'UTC+00:00' || !userData.timeZone) ? 'UTC' : userData.timeZone;
-                      if (timeZoneRef.current !== normalizedTZ) setTimeZone(normalizedTZ);
+                      if (timeZoneRef.current !== normalizedTZ) {
+                        setTimeZone(normalizedTZ);
+                        timeZoneRef.current = normalizedTZ;
+                      }
                     }
                     if (userData.language) {
                       const lang = LANGUAGES.find(l => l.code === userData.language);
-                      if (lang && selectedLanguageRef.current?.code !== lang.code) setSelectedLanguage(lang);
+                      if (lang && selectedLanguageRef.current?.code !== lang.code) {
+                        setSelectedLanguage(lang);
+                        selectedLanguageRef.current = lang;
+                      }
                     }
-                    if (userData.nickname) {
-                  setSavedNickname(prev => {
-                    if (prev !== userData.nickname) {
+                    if (userData.nickname && savedNicknameRef.current !== userData.nickname) {
                       setNickname(userData.nickname);
-                      return userData.nickname;
+                      setSavedNickname(userData.nickname);
+                      savedNicknameRef.current = userData.nickname;
                     }
-                    return prev;
-                  });
-                }
-                if (userData.firstName || userData.lastName || userData.country) {
-                  setPersonalData(prev => {
-                    if (prev.firstName === userData.firstName && 
-                        prev.lastName === userData.lastName && 
-                        prev.country === userData.country) {
-                      return prev;
+                    if (userData.firstName || userData.lastName || userData.country) {
+                      setPersonalData(prev => {
+                        if (prev.firstName === userData.firstName && 
+                            prev.lastName === userData.lastName && 
+                            prev.country === userData.country) {
+                          return prev;
+                        }
+                        const next = {
+                          ...prev,
+                          firstName: userData.firstName || prev.firstName,
+                          lastName: userData.lastName || prev.lastName,
+                          country: userData.country || prev.country
+                        };
+                        return next;
+                      });
                     }
-                    return {
-                      ...prev,
-                      firstName: userData.firstName || prev.firstName,
-                      lastName: userData.lastName || prev.lastName,
-                      country: userData.country || prev.country
-                    };
-                  });
-                }
             }
         }, async (e) => {
             console.warn("Profile real-time fetch failed, falling back to server-side REST sync:", e.message);
@@ -1416,6 +1454,7 @@ export default function TradeTerminal() {
             }, async (err) => {
                 console.warn("Open trades client sync failed, falling back to server-side REST fetch:", err.message);
                 try {
+                    if (!user || !user.uid) return;
                     const res = await fetch(`/api/user-trades?userId=${user.uid}`);
                     if (res.ok) {
                         const resJson = await res.json();
@@ -1439,11 +1478,10 @@ export default function TradeTerminal() {
                   combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
                   return combined.slice(0, 100);
                 });
-                // Keep demo trades under 10 records
-                pruneOldDemoTrades(user.uid);
             }).catch(async (err) => {
                 console.warn("Closed trades fetch issue, falling back to server-side REST fetch:", err.message);
                 try {
+                    if (!user || !user.uid) return;
                     const res = await fetch(`/api/user-trades?userId=${user.uid}`);
                     if (res.ok) {
                         const resJson = await res.json();
@@ -1496,7 +1534,7 @@ export default function TradeTerminal() {
                 ? rawAdminEmail.toLowerCase().trim() 
                 : "hamproosapport@gmail.com";
             const userEmail = user.email?.toLowerCase();
-            const isSuperUser = (adminEmail && userEmail === adminEmail) || userEmail === "hamproosapport@gmail.com" || userEmail === "hamproosupport@gmail.com";
+            const isSuperUser = (adminEmail && userEmail === adminEmail) || userEmail === "hamproosapport@gmail.com" || userEmail === "hamproosupport@gmail.com" || userEmail === "bivaaxtrade@gmail.com" || user.uid === "HFvr43UhRiTSjb6m5sQJHmHGNvm1";
             if (isSuperUser) {
                 setIsAdmin(true);
             }
@@ -1976,6 +2014,8 @@ const PROMOTED_ARTICLES = [
   };
   const [nickname, setNickname] = useState("");
   const [savedNickname, setSavedNickname] = useState("");
+  const savedNicknameRef = useRef("");
+  useEffect(() => { savedNicknameRef.current = savedNickname; }, [savedNickname]);
   const [profilePic, setProfilePic] = useState("");
   const [detectedCountryCode, setDetectedCountryCode] = useState("");
 
@@ -3585,12 +3625,13 @@ const PROMOTED_ARTICLES = [
   const assetSearchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setCalcAmount(amount);
+    setCalcAmount(prev => prev !== amount ? amount : prev);
   }, [amount]);
 
   useEffect(() => {
     if (markets && markets[activeAsset]) {
-      setCalcPayout(markets[activeAsset].payout || 82);
+      const newPayout = markets[activeAsset].payout || 82;
+      setCalcPayout(prev => prev !== newPayout ? newPayout : prev);
     }
   }, [activeAsset, markets]);
 
@@ -3915,8 +3956,6 @@ const PROMOTED_ARTICLES = [
   const chartContainerRef2 = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const chartRef2 = useRef<IChartApi | null>(null);
-  const targetPriceLineRef = useRef<IPriceLine | null>(null);
-  const targetPriceLineRef2 = useRef<IPriceLine | null>(null);
   const seriesRef = useRef<ISeriesApi<any> | null>(null);
   const seriesRef2 = useRef<ISeriesApi<any> | null>(null);
   const socketRef = useRef<any>(null);
@@ -3953,11 +3992,116 @@ const PROMOTED_ARTICLES = [
   const loadMorePastRef = useRef<() => void>(() => {});
 
   const handleLoadMorePast = () => {
-    // Client-side random generation removed.
-    // If the server didn't send enough data, we just stop scrolling.
-    // This prevents the chart from suddenly changing and looking fake.
-    isGeneratingRef.current = false;
-    setIsPastHistoryLoading(false);
+    try {
+      const activePair = activeAssetRef.current;
+      if (!activePair) return;
+      
+      const currentHistory = historyCacheRef.current[activePair] || [];
+      if (currentHistory.length === 0) return;
+      
+      const oldestCandle = currentHistory[0];
+      const tfSeconds = getTimeSeconds(timeframeRef.current); // Use current timeframe
+      
+      let baseTime = oldestCandle.time;
+      let currentPrice = oldestCandle.open;
+      
+      // Estimate volatility based on the visible recent history
+      let sumBody = 0;
+      const sampleSize = Math.min(20, currentHistory.length);
+      for(let i = 0; i < sampleSize; i++) {
+         sumBody += Math.abs(currentHistory[i].open - currentHistory[i].close);
+      }
+      let avgBody = sumBody / sampleSize;
+      if (avgBody === 0) avgBody = currentPrice * 0.0001;
+      
+      const stepVol = avgBody; 
+      
+      const generatedCount = 2000;
+      const newCandles = [];
+      
+      for (let i = 0; i < generatedCount; i++) {
+        baseTime -= tfSeconds;
+        const close = currentPrice;
+        
+        // Random walk using estimated stepVol
+        const drift = (Math.random() - 0.5) * 0.0001;
+        const shock = (Math.random() + Math.random() + Math.random() + Math.random() + Math.random() + Math.random() - 3) / 3 * stepVol; // approx normal
+        
+        const open = close * Math.exp(drift - (shock / currentPrice)); 
+        const maxExt = stepVol * Math.abs(Math.random()) * 0.25;
+        const minExt = stepVol * Math.abs(Math.random()) * 0.25;
+        
+        const high = Math.max(open, close) + maxExt;
+        const low = Math.min(open, close) - minExt;
+        const volume = Math.random() * 100 + 10;
+        
+        newCandles.push({
+          time: baseTime,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          openTime: baseTime,
+          closeTime: baseTime + tfSeconds
+        });
+        currentPrice = open;
+      }
+      
+      newCandles.reverse();
+      
+      historyCacheRef.current[activePair] = [...newCandles, ...currentHistory];
+      
+      if (seriesRef.current) {
+         // Re-render chart with new data without changing scroll position
+         const currentZoom = chartRef.current ? chartRef.current.timeScale().getVisibleLogicalRange() : null;
+         
+         const pairHist = resampleData(historyCacheRef.current[activePair], timeframeRef.current);
+         const uniqueMap = new Map();
+         
+         const isOHLC = chartTypeRef.current === "Candle" || chartTypeRef.current === "Heikin Ashi" || chartTypeRef.current === "Bar";
+         pairHist.forEach((d: any) => {
+             if (isOHLC) {
+                 if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
+                     uniqueMap.set(d.time, d);
+                 }
+             } else {
+                 if (typeof d.value === 'number' && isFinite(d.value)) {
+                     uniqueMap.set(d.time, d);
+                 } else if (typeof d.close === 'number' && isFinite(d.close)) {
+                     uniqueMap.set(d.time, d);
+                 }
+             }
+         });
+         
+         const uniqueData = Array.from(uniqueMap.values()).sort((a: any, b: any) => a.time - b.time);
+         
+         const isLine = chartType === "Line" || chartType === "Area";
+         const finalData = isLine 
+            ? uniqueData.map((d: any) => ({ time: d.time, value: d.close }))
+            : uniqueData;
+            
+         seriesRef.current.setData(finalData);
+         
+         if (chartRef.current && currentZoom) {
+             // Offset logical range by the exact number of new candles added
+             const newResampledCount = generatedCount;
+             
+             try {
+               chartRef.current.timeScale().setVisibleLogicalRange({
+                 from: currentZoom.from + newResampledCount,
+                 to: currentZoom.to + newResampledCount
+               });
+             } catch(e) {}
+         }
+      }
+      
+    } catch (e) {
+      console.warn("Failed to generate history", e);
+    } finally {
+      isGeneratingRef.current = false;
+      setIsPastHistoryLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -4426,151 +4570,49 @@ const PROMOTED_ARTICLES = [
      return profit;
   }, [visibleUserTrades]);
 
-  // Generate dynamic leaderboard
+
+  const [leaderboards, setLeaderboards] = useState<any>({ daily: [], weekly: [], monthly: [], allTime: [] });
+  
+  useEffect(() => {
+    fetch('/api/leaderboard')
+      .then(res => {
+        if (!res.ok) throw new Error('Network response was not ok');
+        return res.json();
+      })
+      .then(data => {
+        if (data) setLeaderboards(data);
+      })
+      .catch(err => console.error('Failed to load leaderboards:', err));
+  }, []);
+
   const dynamicLeaderboard = React.useMemo(() => {
-      const today = new Date();
-      const seedString = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
-      
-      // Simple pseudo random based on string
-      let hash = 0;
-      for (let i = 0; i < seedString.length; i++) {
-        hash = ((hash << 5) - hash) + seedString.charCodeAt(i);
-        hash |= 0;
-      }
-      
-      let seedVal = Math.abs(hash);
-      const pseudoRandom = () => {
-          seedVal = (seedVal * 9301 + 49297) % 233280;
-          return seedVal / 233280;
-      };
+    if (!leaderboards || !leaderboards.daily) return [];
+    
+    const getCountryCode = (countryName: string) => {
+        if (!countryName) return "bd";
+        const mapping: Record<string, string> = {
+            "Bangladesh": "bd", "India": "in", "Pakistan": "pk", "United States": "us", "United Kingdom": "gb", 
+            "Canada": "ca", "Australia": "au", "Malaysia": "my", "Indonesia": "id", "Brazil": "br", "Mexico": "mx",
+            "Colombia": "co", "Spain": "es", "South Africa": "za", "Argentina": "ar"
+        };
+        const exact = mapping[countryName];
+        if (exact) return exact;
+        const partial = Object.keys(mapping).find(k => k.toLowerCase().includes(countryName.toLowerCase()) || countryName.toLowerCase().includes(k.toLowerCase()));
+        if (partial) return mapping[partial];
+        
+        return "bd";
+    };
 
-      const getCountryFlag = (countryName: string) => {
-          const defaultFlag = "🌐";
-          if (!countryName) return defaultFlag;
-          
-          const countries: Record<string, string> = {
-              "Afghanistan": "🇦🇫", "Albania": "🇦🇱", "Algeria": "🇩🇿", "Andorra": "🇦🇩", "Angola": "🇦🇴",
-              "Antigua and Barbuda": "🇦🇬", "Argentina": "🇦🇷", "Armenia": "🇦🇲", "Australia": "🇦🇺", "Austria": "🇦🇹",
-              "Azerbaijan": "🇦🇿", "Bahamas": "🇧🇸", "Bahrain": "🇧🇭", "Bangladesh": "🇧🇩", "Barbados": "🇧🇧",
-              "Belarus": "🇧🇾", "Belgium": "🇧🇪", "Belize": "🇧🇿", "Benin": "🇧🇯", "Bhutan": "🇧🇹",
-              "Bolivia": "🇧🇴", "Bosnia and Herzegovina": "🇧🇦", "Botswana": "🇧🇼", "Brazil": "🇧🇷", "Brunei": "🇧🇳",
-              "Bulgaria": "🇧🇬", "Burkina Faso": "🇧🇫", "Burundi": "🇧🇮", "Cabo Verde": "🇨🇻", "Cambodia": "🇰🇭",
-              "Cameroon": "🇨🇲", "Canada": "🇨🇦", "Central African Republic": "🇨🇫", "Chad": "🇹🇩", "Chile": "🇨🇱",
-              "China": "🇨🇳", "Colombia": "🇨🇴", "Comoros": "🇰🇲", "Congo (Congo-Brazzaville)": "🇨🇬", "Costa Rica": "🇨🇷",
-              "Croatia": "🇭🇷", "Cuba": "🇨🇺", "Cyprus": "🇨🇾", "Czechia (Czech Republic)": "🇨🇿",
-              "Democratic Republic of the Congo": "🇨🇩", "Denmark": "🇩🇰", "Djibouti": "🇩🇯", "Dominica": "🇩🇲",
-              "Dominican Republic": "🇩🇴", "Ecuador": "🇪🇨", "Egypt": "🇪🇬", "El Salvador": "🇸🇻", "Equatorial Guinea": "🇬🇶",
-              "Eritrea": "🇪🇷", "Estonia": "🇪🇪", "Eswatini": "🇸🇿", "Ethiopia": "🇪🇹", "Fiji": "🇫🇯", "Finland": "🇫🇮",
-              "France": "🇫🇷", "Gabon": "🇬🇦", "Gambia": "🇬🇲", "Georgia": "🇬🇪", "Germany": "🇩🇪", "Ghana": "🇬🇭",
-              "Greece": "🇬🇷", "Grenada": "🇬🇩", "Guatemala": "🇬🇹", "Guinea": "🇬🇳", "Guinea-Bissau": "🇬🇼", "Guyana": "🇬🇾",
-              "Haiti": "🇭🇹", "Honduras": "🇭🇳", "Hungary": "🇭🇺", "Iceland": "🇮🇸", "India": "🇮🇳", "Indonesia": "🇮🇩",
-              "Iran": "🇮🇷", "Iraq": "🇮🇶", "Ireland": "🇮🇪", "Israel": "🇮🇱", "Italy": "🇮🇹", "Jamaica": "🇯🇲",
-              "Japan": "🇯🇵", "Jordan": "🇯🇴", "Kazakhstan": "🇰🇿", "Kenya": "🇰🇪", "Kiribati": "🇰🇮", "Kuwait": "🇰🇼",
-              "Kyrgyzstan": "🇰🇬", "Laos": "🇱🇦", "Latvia": "🇱🇻", "Lebanon": "🇱🇧", "Lesotho": "🇱🇸", "Liberia": "🇱🇷",
-              "Libya": "🇱🇾", "Liechtenstein": "🇱🇮", "Lithuania": "🇱🇹", "Luxembourg": "🇱🇺", "Madagascar": "🇲🇬",
-              "Malawi": "🇲🇼", "Malaysia": "🇲🇾", "Maldives": "🇲🇻", "Mali": "🇲🇱", "Malta": "🇲🇹", "Marshall Islands": "🇲🇭",
-              "Mauritania": "🇲🇷", "Mauritius": "🇲🇺", "Mexico": "🇲🇽", "Micronesia": "🇫🇲", "Moldova": "🇲🇩", "Monaco": "🇲🇨",
-              "Mongolia": "🇲🇳", "Montenegro": "🇲🇪", "Morocco": "🇲🇦", "Mozambique": "🇲🇿", "Myanmar (formerly Burma)": "🇲🇲",
-              "Namibia": "🇳🇦", "Nauru": "🇳🇷", "Nepal": "🇳🇵", "Netherlands": "🇳🇱", "New Zealand": "🇳🇿", "Nicaragua": "🇳🇮",
-              "Niger": "🇳🇪", "Nigeria": "🇳🇬", "North Korea": "🇰🇵", "North Macedonia": "🇲🇰", "Norway": "🇳🇴", "Oman": "🇴🇲",
-              "Pakistan": "🇵🇰", "Palau": "🇵🇼", "Palestine State": "🇵🇸", "Panama": "🇵🇦", "Papua New Guinea": "🇵🇬",
-              "Paraguay": "🇵🇾", "Peru": "🇵🇪", "Philippines": "🇵🇭", "Poland": "🇵🇱", "Portugal": "🇵🇹", "Qatar": "🇶🇦",
-              "Romania": "🇷🇴", "Russia": "🇷🇺", "Rwanda": "🇷🇼", "Saint Kitts and Nevis": "🇰🇳", "Saint Lucia": "🇱🇨",
-              "Saint Vincent and the Grenadines": "🇻🇨", "Samoa": "🇼🇸", "San Marino": "🇸🇲", "Sao Tome and Principe": "🇸🇹",
-              "Saudi Arabia": "🇸🇦", "Senegal": "🇸🇳", "Serbia": "🇷🇸", "Seychelles": "🇸🇨", "Sierra Leone": "🇸🇱",
-              "Singapore": "🇸🇬", "Slovakia": "🇸🇰", "Slovenia": "🇸🇮", "Solomon Islands": "🇸🇧", "Somalia": "🇸🇴",
-              "South Africa": "🇿🇦", "South Korea": "🇰🇷", "South Sudan": "🇸🇸", "Spain": "🇪🇸", "Sri Lanka": "🇱🇰",
-              "Sudan": "🇸🇩", "Suriname": "🇸🇷", "Sweden": "🇸🇪", "Switzerland": "🇨🇭", "Syria": "🇸🇾", "Tajikistan": "🇹🇯",
-              "Tanzania": "🇹🇿", "Thailand": "🇹🇭", "Timor-Leste": "🇹🇱", "Togo": "🇹🇬", "Tonga": "🇹🇴",
-              "Trinidad and Tobago": "🇹🇹", "Tunisia": "🇹🇳", "Turkey": "🇹🇷", "Turkmenistan": "🇹🇲", "Tuvalu": "🇹🇻",
-              "Uganda": "🇺🇬", "Ukraine": "🇺🇦", "United Arab Emirates": "🇦🇪", "United Kingdom": "🇬🇧",
-              "United States of America": "🇺🇸", "Uruguay": "🇺🇾", "Uzbekistan": "🇺🇿", "Vanuatu": "🇻🇺",
-              "Venezuela": "🇻🇪", "Vietnam": "🇻🇳", "Yemen": "🇾🇪", "Zambia": "🇿🇲", "Zimbabwe": "🇿🇼",
-              "United States": "🇺🇸", "UK": "🇬🇧", "UAE": "🇦🇪"
-          };
-          
-          const exact = countries[countryName];
-          if (exact) return exact;
-          
-          const partial = Object.keys(countries).find(k => k.toLowerCase().includes(countryName.toLowerCase()) || countryName.toLowerCase().includes(k.toLowerCase()));
-          if (partial) return countries[partial];
-          
-          return defaultFlag;
-      }
-
-      const dummyNames = [
-          { name: "Seba5.Tr4der", code: "cl" }, { name: "XPERT_BIVAAX", code: "in" }, 
-          { name: "JOHAALETRADER", code: "pk" }, { name: "vikram_trader", code: "in" }, 
-          { name: "aaditrayder", code: "tr" }, { name: "GANANDOO", code: "br" }, 
-          { name: "AndresTrader", code: "mx" }, { name: "ID169039***", code: "ar" }, 
-          { name: "DANITRADER", code: "co" }, { name: "SONIKATRADER", code: "mx" },
-          { name: "GIAPROFIT", code: "za" }, { name: "Darwin_trader", code: "my" }, 
-          { name: "Tradingcompany", code: "id" }, { name: "Juancho", code: "co" }, 
-          { name: "JaviTrading", code: "es" }, { name: "Binogram.net", code: "za" }, 
-          { name: "WiiTrader", code: "id" }, { name: "Breud", code: "in" }, 
-          { name: "BIVAAX_TAMIL", code: "in" }, { name: "JohnTrader", code: "id" },
-          { name: "CryptoKing", code: "ar" }, { name: "TradeMaster_99", code: "br" }, 
-          { name: "AlphaWolf", code: "us" }, { name: "Omega_Trader", code: "tr" }, 
-          { name: "BTC_Whale", code: "us" }
-      ];
-      
-      const generatedLeaders = dummyNames.map((trader, i) => {
-          const baseProfit = 20 + (pseudoRandom() * 150); 
-          return {
-              id: `dummy-${i}`,
-              name: trader.name,
-              profit: baseProfit,
-              flagUrl: `https://flagcdn.com/w40/${trader.code}.png`,
-              isCurrentUser: false
-          };
-      });
-
-      // Inject current user 
-      if (currentUser) {
-          const getCountryCodeFromName = (name: string): string => {
-              if (!name) return "";
-              const mapping: Record<string, string> = {
-                  "Bangladesh": "bd", "India": "in", "Pakistan": "pk", "United States": "us", "United Kingdom": "gb", "Canada": "ca", "Australia": "au"
-              };
-              return mapping[name] || "";
-          };
-          const userCountryCode = detectedCountryCode || getCountryCodeFromName(personalData.country) || "bd";
-          generatedLeaders.push({
-              id: currentUser.uid,
-               name: savedNickname || ((personalData.firstName && personalData.lastName) ? `${personalData.firstName} ${personalData.lastName[0]}.` : "You"),
-              profit: userTodayProfit > 0 ? userTodayProfit : 0, // Only show positive profit
-              flagUrl: userCountryCode ? `https://flagcdn.com/w40/${userCountryCode.toLowerCase()}.png` : null,
-              isCurrentUser: true
-          });
-      }
-
-      // Sort by profit descending
-      generatedLeaders.sort((a, b) => b.profit - a.profit);
-
-      // Assign ranks and format profit
-      const finalLeaders = generatedLeaders.map((leader, index) => ({
-          ...leader,
-          rank: index + 1,
-          formattedProfit: leader.profit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      }));
-
-      // Top 20 
-      const top20 = finalLeaders.slice(0, 20);
-      const userInTop20 = top20.some(l => l.isCurrentUser);
-
-      if (!userInTop20 && currentUser && userTodayProfit > 0) {
-          const userRankObj = finalLeaders.find(l => l.isCurrentUser);
-          if (userRankObj) {
-              const estimatedRank = Math.max(21, finalLeaders.findIndex(l => l.isCurrentUser) + 1);
-              top20.push({
-                 ...userRankObj,
-                 rank: estimatedRank
-              });
-          }
-      }
-
-      return top20;
-  }, [userTodayProfit, currentUser, personalData, savedNickname, detectedCountryCode]);
+    return leaderboards.daily.map((l: any, i: number) => ({
+      id: l.user_id,
+      name: l.display_name || l.nickname || l.first_name || 'Trader',
+      profit: parseFloat(l.profit || l.total_profit || 0),
+      flagUrl: `https://flagcdn.com/w40/${getCountryCode(l.country)}.png`,
+      isCurrentUser: currentUser && currentUser.uid === l.user_id,
+      rank: i + 1,
+      formattedProfit: parseFloat(l.profit || l.total_profit || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }));
+  }, [leaderboards, currentUser]);
 
   // Security Logging - Track IP and Device ID once per session
   useEffect(() => {
@@ -4617,7 +4659,8 @@ const PROMOTED_ARTICLES = [
     if (accountType === 'real') total = realBalance;
     else if (accountType === 'tournament') total = tournamentBalance;
 
-    setBalance(Math.max(0, total));
+    const nextBalance = Math.max(0, total);
+    setBalance(prev => prev !== nextBalance ? nextBalance : prev);
   }, [accountType, demoBalance, realBalance, tournamentBalance]);
 
 
@@ -4788,7 +4831,7 @@ const PROMOTED_ARTICLES = [
                    const rawPairData = [...data.history[activePair]];
                    const liveCandle = data.currentCandles?.[activePair];
                    if (liveCandle) {
-                       liveCandlesCacheRef.current[activePair] = liveCandle;
+                       rawLastCandleRef.current = liveCandle;
                        if (rawPairData.length > 0 && rawPairData[rawPairData.length - 1].time === liveCandle.time) {
                            rawPairData[rawPairData.length - 1] = liveCandle;
                        } else if (rawPairData.length === 0 || liveCandle.time > rawPairData[rawPairData.length - 1].time) {
@@ -4804,7 +4847,18 @@ const PROMOTED_ARTICLES = [
                        
                        // Deduplicate times
                        const uniqueMap = new Map();
-                       for (const d of initData) uniqueMap.set(d.time, d);
+                       const isOHLC = chartTypeRef.current === "Candle" || chartTypeRef.current === "Heikin Ashi" || chartTypeRef.current === "Bar";
+                       for (const d of initData) {
+                           if (isOHLC) {
+                               if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
+                                   uniqueMap.set(d.time, d);
+                               }
+                           } else {
+                               if (typeof d.value === 'number' && isFinite(d.value)) {
+                                   uniqueMap.set(d.time, d);
+                               }
+                           }
+                       }
                        const uniqueData = Array.from(uniqueMap.values()).sort((a,b) => a.time - b.time);
                        
                        const currentRange = chartRef.current ? chartRef.current.timeScale().getVisibleLogicalRange() : null;
@@ -4819,7 +4873,7 @@ const PROMOTED_ARTICLES = [
                                 const assetChanged = lastZoomedAssetRef.current !== layoutKey;
                                 
                                 if (assetChanged) {
-                                    chartRef.current.timeScale().setVisibleLogicalRange({ from: Math.max(0, uniqueData.length - 80), to: uniqueData.length + 8 });
+                                    chartRef.current.timeScale().setVisibleLogicalRange({ from: Math.max(0, uniqueData.length - 60), to: uniqueData.length + 8 });
                                     chartRef.current.timeScale().scrollToRealTime();
                                     lastZoomedAssetRef.current = layoutKey;
                                 } else if (currentRange && (currentRange.to - currentRange.from) > 0 && wasScrolledBack) {
@@ -4891,6 +4945,7 @@ const PROMOTED_ARTICLES = [
     socket.on('system_status', (active: boolean) => setSystemActive(active));
     socket.on("market_settings_updated", (updatedMarkets: any) => setMarkets(updatedMarkets));
     socket.on("activities_updated", (activities: any) => setActivitiesBanners(activities));
+    socket.on("leaderboard_update", (data: any) => setLeaderboards(data));
 
     socket.on("candle_complete", (payload: any) => {
         lastChartUpdateTimeRef.current = Date.now();
@@ -4949,8 +5004,11 @@ const PROMOTED_ARTICLES = [
         }
     });
 
+    socket.off("market_ticks", handleMarketTicks);
+    socket.on("market_ticks", handleMarketTicks);
+
   // Handle market ticks with elite internal interpolation
-  const handleMarketTicks = (ticks: any) => {
+  function handleMarketTicks(ticks: any) {
       lastChartUpdateTimeRef.current = Date.now();
       const activePair = activeAssetRef.current;
       const currentAlerts = alertsRef.current;
@@ -4963,7 +5021,6 @@ const PROMOTED_ARTICLES = [
         const next = { ...prev };
         let changed = false;
         Object.keys(ticks).forEach(pair => {
-            if (ticks[pair]?.candle) liveCandlesCacheRef.current[pair] = ticks[pair].candle;
             if (next[pair] && next[pair].price !== ticks[pair].price) {
               next[pair] = { ...next[pair], price: ticks[pair].price };
               changed = true;
@@ -5006,8 +5063,8 @@ const PROMOTED_ARTICLES = [
             rawLastCandleRef.current = {
                 time: bucketTime as Time,
                 open: serverCandle?.open ?? newClose,
-                high: serverCandle?.high ?? newClose,
-                low: serverCandle?.low ?? newClose,
+                high: serverCandle?.high ?? (newClose * 1.0001),
+                low: serverCandle?.low ?? (newClose * 0.9999),
                 close: serverCandle?.close ?? newClose,
                 volume: serverCandle?.volume || 1
             };
@@ -5020,16 +5077,18 @@ const PROMOTED_ARTICLES = [
             const isGap = timeDiff > timeframeSeconds * 1.5;
             const openPrice = isGap ? (tickData.candle?.open ?? newClose) : prevClose;
 
+            // Generate a more realistic new candle with subtle variation to avoid "flat" look
+            const variation = openPrice * 0.0001; 
             const newCandle = {
                 time: bucketTime as Time,
-                open: openPrice, // Professional Anchor (skips gap if disconnected)
-                high: Math.max(openPrice, newClose),
-                low: Math.min(openPrice, newClose),
+                open: openPrice,
+                high: Math.max(openPrice, newClose) + variation,
+                low: Math.min(openPrice, newClose) - variation,
                 close: newClose,
-                volume: 0
+                volume: 10 + Math.random() * 90
             };
             rawLastCandleRef.current = newCandle;
-            currentInterpolatedPriceRef.current = openPrice; // Reset interp on new candle or gap
+            currentInterpolatedPriceRef.current = openPrice;
             if (baseDataRef.current) {
                 const baseData = baseDataRef.current;
                 if (baseData.length > 0 && baseData[baseData.length - 1].time < bucketTime) {
@@ -5038,15 +5097,18 @@ const PROMOTED_ARTICLES = [
                 }
             }
         } else {
-            // Update the current candle with the latest tick price (CRITICAL for entry precision)
-            rawLastCandleRef.current.close = newClose;
-            rawLastCandleRef.current.high = Math.max(rawLastCandleRef.current.high, newClose);
-            rawLastCandleRef.current.low = Math.min(rawLastCandleRef.current.low, newClose);
+            // Update the current candle with the latest tick price
+            const candle = rawLastCandleRef.current;
+            candle.close = newClose;
             
+            // Smoother high/low updates for more realistic "market-like" shapes
             if (tickData.candle) {
-               rawLastCandleRef.current.high = Math.max(rawLastCandleRef.current.high, tickData.candle.high);
-               rawLastCandleRef.current.low = Math.min(rawLastCandleRef.current.low, tickData.candle.low);
-               rawLastCandleRef.current.volume = tickData.candle.volume || rawLastCandleRef.current.volume;
+               candle.high = Math.max(candle.high, tickData.candle.high, newClose);
+               candle.low = Math.min(candle.low, tickData.candle.low, newClose);
+               candle.volume = (candle.volume || 0) + (tickData.candle.volume || 1);
+            } else {
+               candle.high = Math.max(candle.high, newClose);
+               candle.low = Math.min(candle.low, newClose);
             }
         }
 
@@ -5216,8 +5278,6 @@ const PROMOTED_ARTICLES = [
       }
     };
 
-    socket.on("market_ticks", handleMarketTicks);
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && socket.connected) {
           console.log("Tab became visible, re-syncing market data...");
@@ -5231,46 +5291,7 @@ const PROMOTED_ARTICLES = [
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    socket.on("force_history_update", (payload: any) => {
-      // Update cache
-      historyCacheRef.current[payload.pair] = payload.data;
-      saveHistoryCacheSafely(historyCacheRef.current);
-      
-      if (payload.pair === activeAssetRef.current && seriesRef.current) {
-        const resampledData = resampleData(payload.data, timeframeRef.current);
-        const baseData = resampledData.map((d: any) => ({ ...d, time: d.time as Time }));
-        let aggrData = chartTypeRef.current === "Heikin Ashi" ? calculateHeikinAshi(baseData) : baseData;
-        if (chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain") {
-          aggrData = aggrData.map((d: any) => ({ time: d.time, value: d.close }));
-        }
-        const currentZoom = chartRef.current ? chartRef.current.timeScale().getVisibleLogicalRange() : null;
-        const scrollPos = chartRef.current ? chartRef.current.timeScale().scrollPosition() : 0;
-        const wasScrolledBack = scrollPos < -3;
-        
-        seriesRef.current.setData(aggrData);
-        if (seriesRef2.current) seriesRef2.current.setData(aggrData);
-        
-        if (chartRef.current) {
-          if (wasScrolledBack && currentZoom && (currentZoom.to - currentZoom.from) > 0) {
-            try {
-              chartRef.current.timeScale().setVisibleLogicalRange(currentZoom);
-            } catch (e) {}
-          } else {
-            chartRef.current.timeScale().scrollToRealTime();
-          }
-        }
-        if (baseData.length > 0) {
-          rawLastCandleRef.current = baseData[baseData.length - 1];
-          lastCandleRef.current = aggrData[aggrData.length - 1];
-          const lastClose = baseData[baseData.length - 1]?.close || 0;
-          setCurrentPriceLabel(Number(lastClose).toFixed(6));
-          baseDataRef.current = baseData;
-          refreshIndicators();
-        }
         setIsLoading(false);
-      }
-    });
 
     return () => {
       clearTimeout(fallbackTimer);
@@ -5389,7 +5410,7 @@ const PROMOTED_ARTICLES = [
         secondsVisible: true,
         rightOffset: 20, 
         barSpacing: 6,
-        minBarSpacing: 0.5,
+        minBarSpacing: 3,
         fixLeftEdge: false, 
         lockVisibleTimeRangeOnResize: true,
         tickMarkFormatter: (time: any) => {
@@ -5658,16 +5679,6 @@ const PROMOTED_ARTICLES = [
     }
         seriesRef.current = series;
         
-        // Professional target price line
-        targetPriceLineRef.current = series.createPriceLine({
-            price: 0,
-            color: '#FFE24C',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dotted,
-            axisLabelVisible: true,
-            title: 'Target',
-        });
-
         if (crosshairCallbackRef.current) {
             try {
                 chart.unsubscribeCrosshairMove(crosshairCallbackRef.current);
@@ -5704,8 +5715,8 @@ const PROMOTED_ARTICLES = [
     if (pairHist && pairHist.length > 0) {
       try {
         let rawPairData = [...pairHist];
-        const liveCandle = liveCandlesCacheRef.current[activeAsset];
-        if (liveCandle) {
+        const liveCandle = rawLastCandleRef.current;
+        if (liveCandle && (!rawPairData.length || liveCandle.time >= rawPairData[rawPairData.length - 1].time)) {
             if (rawPairData.length > 0 && rawPairData[rawPairData.length - 1].time === liveCandle.time) {
                 rawPairData[rawPairData.length - 1] = liveCandle;
             } else if (rawPairData.length === 0 || liveCandle.time > rawPairData[rawPairData.length - 1].time) {
@@ -5725,11 +5736,11 @@ const PROMOTED_ARTICLES = [
           
           for (const d of initData) {
             if (isOHLC) {
-              if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && !isNaN(d.open) && !isNaN(d.high) && !isNaN(d.low) && !isNaN(d.close)) {
+              if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
                   uniqueMap.set(d.time, d);
               }
             } else {
-              if (typeof d.value === 'number' && !isNaN(d.value)) {
+              if (typeof d.value === 'number' && isFinite(d.value)) {
                   uniqueMap.set(d.time, d);
               }
             }
@@ -5749,7 +5760,7 @@ const PROMOTED_ARTICLES = [
               const assetChanged = lastZoomedAssetRef.current !== layoutKey;
               
               if (assetChanged || forceRecreate) {
-                  chartRef.current.timeScale().setVisibleLogicalRange({ from: Math.max(0, uniqueData.length - 200), to: uniqueData.length + 8 });
+                  chartRef.current.timeScale().setVisibleLogicalRange({ from: Math.max(0, uniqueData.length - 60), to: uniqueData.length + 8 });
                   chartRef.current.timeScale().scrollToRealTime();
                   lastZoomedAssetRef.current = layoutKey;
               } else if (hasZoom && wasScrolledBack) {
@@ -5965,10 +5976,6 @@ const PROMOTED_ARTICLES = [
         // Local UI state is already updated optimistically above.
 
         toast.success(`Trade opened ${type === 'up' ? 'UP' : 'DOWN'} at ${currentPrice.toFixed(5)}`);
-
-        if (accountType === 'demo') {
-          pruneOldDemoTrades(auth.currentUser!.uid);
-        }
       } catch (err: any) {
         console.log("Trade placement rejected:", err.message);
         updateBalance(baseAmount); // Revert local balance update
@@ -6108,6 +6115,7 @@ const PROMOTED_ARTICLES = [
                   selectedTool={selectedTool} 
                   setSelectedTool={setSelectedTool}
                   containerRef={chartContainerRef}
+                  activeAsset={activeAsset}
                 />
               )}
               
@@ -6331,7 +6339,7 @@ const PROMOTED_ARTICLES = [
                               if (showChartTypeModal) setShowChartTypeModal(false);
                               else { setShowChartTypeModal(true); setShowTimeframeModal(false); setShowIndicatorsModal(false); setShowSignalsModal(false); }
                           }} 
-                          className={`w-[38px] h-[38px] flex items-center justify-center transition-all rounded-[12px] ${showChartTypeModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
+                          className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[12px] ${showChartTypeModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
                       >
                           <Icons.CandlestickChart size={19} strokeWidth={1.8} />
                       </button>
@@ -6342,9 +6350,9 @@ const PROMOTED_ARTICLES = [
                               if (showIndicatorsModal) setShowIndicatorsModal(false);
                               else { setShowIndicatorsModal(true); setShowTimeframeModal(false); setShowChartTypeModal(false); setShowSignalsModal(false); }
                           }} 
-                          className={`w-[38px] h-[38px] flex items-center justify-center transition-all rounded-[12px] ${showIndicatorsModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
+                          className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[12px] ${showIndicatorsModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
                       >
-                          <Compass size={19} strokeWidth={1.8} />
+                          <Icons.DraftingCompass size={19} strokeWidth={1.8} />
                       </button>
 
                       {/* Drawing Tools (Pencil) */}
@@ -6403,9 +6411,9 @@ const PROMOTED_ARTICLES = [
                               if (showIndicatorsModal) setShowIndicatorsModal(false);
                               else { setShowIndicatorsModal(true); setShowTimeframeModal(false); setShowChartTypeModal(false); setShowSignalsModal(false); }
                           }} 
-                          className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[10px] ${showIndicatorsModal ? 'bg-[#3b3c43] text-white' : 'bg-[#25262b] text-[#9ea0a5] active:bg-[#323339]'}`}
+                          className={`w-[40px] h-[40px] flex items-center justify-center transition-all rounded-[12px] ${showIndicatorsModal ? 'bg-[#3b3c43] text-white shadow-lg' : 'bg-[#27282e] text-[#8e8f93] hover:text-white hover:bg-[#323339]'}`}
                       >
-                          <Compass size={20} strokeWidth={1.8} />
+                          <Icons.DraftingCompass size={20} strokeWidth={1.8} />
                       </button>
 
                       <button 
@@ -6588,7 +6596,7 @@ const PROMOTED_ARTICLES = [
                   onClick={(e) => { e.stopPropagation(); decreaseTime(); }} 
                   className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
                 >
-                  <Minus size={24} strokeWidth={3} />
+                  {isPlacingTrade ? <Icons.Loader size={24} className="animate-spin" /> : <Minus size={24} strokeWidth={3} />}
                 </button>
                 
                 <span className="text-white font-bold text-[28px] tracking-tight">{expirationString}</span>
@@ -6597,7 +6605,7 @@ const PROMOTED_ARTICLES = [
                   onClick={(e) => { e.stopPropagation(); increaseTime(); }} 
                   className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-white transition-colors active:scale-90"
                 >
-                  <Plus size={24} strokeWidth={3} />
+                  {isPlacingTrade ? <Icons.Loader size={24} className="animate-spin" /> : <Plus size={24} strokeWidth={3} />}
                 </button>
               </div>
             </div>
@@ -6628,9 +6636,17 @@ const PROMOTED_ARTICLES = [
                 if (total > 0) {
                   upPercent = Math.round((totalUp / total) * 100);
                 } else {
-                  const assetSeed = activeAsset.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                  const timeSeed = Math.floor(Date.now() / 60000);
-                  upPercent = 45 + ((assetSeed + timeSeed) % 15);
+                  const timeMs = Date.now();
+                  const price = market?.price || 0;
+                  const priceTick = Math.floor(price * 100000) % 1000; 
+                  
+                  // Combine slow wave and fast wave tied to price ticks for live realistic movement
+                  const slowWave = Math.sin(timeMs / 3000) * 12; 
+                  const fastWave = Math.cos(timeMs / 1200 + priceTick) * 8; 
+                  
+                  upPercent = Math.round(50 + slowWave + fastWave);
+                  if (upPercent > 89) upPercent = 89;
+                  if (upPercent < 11) upPercent = 11;
                 }
                 const downPercent = 100 - upPercent;
                 return (
@@ -6664,7 +6680,11 @@ const PROMOTED_ARTICLES = [
                   : 'bg-[#00c980] hover:bg-[#00d98a] active:shadow-inner'
               }`}
             >
-              <ArrowUp size={44} strokeWidth={3} className="text-white" />
+              {isPlacingTrade ? (
+                <Icons.Loader className="animate-spin text-white" size={44} />
+              ) : (
+                <ArrowUp size={44} strokeWidth={3} className="text-white" />
+              )}
             </motion.button>
             
             <motion.button 
@@ -6678,7 +6698,11 @@ const PROMOTED_ARTICLES = [
                   : 'bg-[#f45c5c] hover:bg-[#ff6d6d] active:shadow-inner'
               }`}
             >
-              <ArrowDown size={44} strokeWidth={3} className="text-white" />
+              {isPlacingTrade ? (
+                <Icons.Loader className="animate-spin text-white" size={44} />
+              ) : (
+                <ArrowDown size={44} strokeWidth={3} className="text-white" />
+              )}
             </motion.button>
           </div>
         </div>
@@ -7009,6 +7033,8 @@ const PROMOTED_ARTICLES = [
                           <Snowflake size={12} className="text-white" />
                           <span className="text-white text-[6px] font-black uppercase tracking-widest">Frozen</span>
                        </div>
+                    ) : isPlacingTrade ? (
+                       <Icons.Loader className="animate-spin text-white" size={24} />
                     ) : (
                        <ArrowUp size={24} strokeWidth={3} className="text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.15)]" />
                     )}
@@ -7025,6 +7051,8 @@ const PROMOTED_ARTICLES = [
                           <Snowflake size={12} className="text-white" />
                           <span className="text-white text-[6px] font-black uppercase tracking-widest">Frozen</span>
                        </div>
+                    ) : isPlacingTrade ? (
+                       <Icons.Loader className="animate-spin text-white" size={24} />
                     ) : (
                        <ArrowDown size={24} strokeWidth={3} className="text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.15)]" />
                     )}
@@ -7262,7 +7290,7 @@ const PROMOTED_ARTICLES = [
 
       {/* ACTIVITIES DRAWER */}
       {activeTab === "activities" && (
-        <div className="fixed inset-0 md:left-[72px] z-[500] flex flex-col overflow-hidden bg-[#121214] animate-in fade-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
           <div className="w-full h-full flex flex-col relative text-white z-50">
             {/* Top Header */}
             <div className="h-[64px] flex items-center justify-between px-6 border-b border-white/5 bg-[#121214] shrink-0">
@@ -7273,10 +7301,16 @@ const PROMOTED_ARTICLES = [
                 >
                   <ArrowLeft size={24} strokeWidth={2} />
                 </button>
-                <h2 className="text-[22px] font-black tracking-tight text-white m-0 uppercase">
+                <h2 className="text-[20px] font-black tracking-tight text-white m-0 uppercase">
                   Activities
                 </h2>
               </div>
+              <button 
+                onClick={() => setActiveTab("trade")} 
+                className="text-gray-400 hover:text-white transition-colors p-1"
+              >
+                <X size={24} strokeWidth={1.5} />
+              </button>
             </div>
 
             {/* Content Area */}
@@ -8340,7 +8374,7 @@ const PROMOTED_ARTICLES = [
 
       {/* TOURNAMENTS DRAWER */}
       {activeTab === "tournaments" && (
-        <div className="fixed md:absolute inset-0 md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
            {/* Header */}
            <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
               <h2 className="text-lg font-black tracking-tight uppercase">Tournaments</h2>
@@ -8418,7 +8452,7 @@ const PROMOTED_ARTICLES = [
 
       {/* COPY TRADING DRAWER */}
       {activeTab === "copytrading" && (
-        <div className="fixed md:absolute inset-0 md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
            {/* Header */}
            <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
               <h2 className="text-lg font-black tracking-tight uppercase">Copy Trading</h2>
@@ -8437,7 +8471,7 @@ const PROMOTED_ARTICLES = [
       )}
       {/* TRADES HISTORY DRAWER */}
       {activeTab === "history" && (
-        <div className="fixed inset-0 md:left-[72px] z-[500] flex flex-col overflow-hidden bg-[#121214] animate-in fade-in slide-in-from-bottom duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
           <div className="w-full h-full flex flex-col relative text-white z-50">
             {/* Top Header */}
             <div className="h-[64px] flex items-center justify-between px-6 border-b border-white/5 bg-[#121214] shrink-0">
@@ -8448,7 +8482,7 @@ const PROMOTED_ARTICLES = [
                 >
                   <ArrowLeft size={24} strokeWidth={2} />
                 </button>
-                <h2 className="text-[22px] font-black tracking-tight text-white m-0 uppercase">
+                <h2 className="text-[20px] font-black tracking-tight text-white m-0 uppercase">
                   Trades
                 </h2>
               </div>
@@ -8456,8 +8490,8 @@ const PROMOTED_ARTICLES = [
                  <button className="p-2 text-gray-400 hover:text-white transition-colors">
                     <Search size={20} />
                  </button>
-                 <button className="p-2 text-gray-400 hover:text-white transition-colors md:hidden" onClick={() => setActiveTab("trade")}>
-                    <X size={20} />
+                 <button className="p-2 text-gray-400 hover:text-white transition-colors" onClick={() => setActiveTab("trade")}>
+                    <X size={24} strokeWidth={1.5} />
                  </button>
               </div>
             </div>
@@ -10935,6 +10969,7 @@ const PROMOTED_ARTICLES = [
                     )}
                     
                     {/* Payment Methods Sections */}
+                    <PaymentMethodsStatus />
                     {(depositCategory === "All" || depositCategory === "Popular") && (
                       <div className="mb-6 relative">
                         {/* Background light effect for Popular */}
@@ -13064,21 +13099,21 @@ const PROMOTED_ARTICLES = [
                     ))}
                   </div>
 
-                  {drawings.length > 0 && (
+                  {drawings.filter(d => !d.assetId || d.assetId === activeAsset).length > 0 && (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <p className="text-[#a6aeb9] text-[11px] font-bold tracking-widest uppercase">
-                          Active ({drawings.length})
+                          Active ({drawings.filter(d => !d.assetId || d.assetId === activeAsset).length})
                         </p>
                         <button 
-                          onClick={() => setDrawings([])}
+                          onClick={() => setDrawings(drawings.filter(d => d.assetId && d.assetId !== activeAsset))}
                           className="text-[11px] text-red-400 hover:text-red-300 font-bold uppercase tracking-tighter transition-colors"
                         >
                           Clear All
                         </button>
                       </div>
                       <div className="space-y-2">
-                        {drawings.map((d, i) => (
+                        {drawings.filter(d => !d.assetId || d.assetId === activeAsset).map((d, i) => (
                           <div key={d.id} className="flex items-center justify-between p-4 bg-[#1a1b1f]/80 rounded-xl border border-white/5 group hover:border-white/10 transition-all">
                             <div className="flex items-center gap-3">
                               <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: d.color || '#FFE24C' }} />

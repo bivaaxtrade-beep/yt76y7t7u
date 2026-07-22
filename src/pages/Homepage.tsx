@@ -10,6 +10,7 @@ import NewsletterForm from '../components/NewsletterForm';
 import TestimonialsCarousel from '../components/TestimonialsCarousel';
 import SEO from '../components/SEO';
 import CopyTradingHighlights from '../components/CopyTradingHighlights';
+import MarketTicker from '../components/MarketTicker';
 
 export default function Homepage() {
   const navigate = useNavigate();
@@ -205,6 +206,9 @@ export default function Homepage() {
 
           <div className="mt-12">
             <PriceTicker />
+            <div className="mt-4">
+              <MarketTicker />
+            </div>
           </div>
 
           <div className="mt-12 flex flex-col lg:flex-row gap-8 items-start">

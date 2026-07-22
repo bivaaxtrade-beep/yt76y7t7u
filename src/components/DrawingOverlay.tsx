@@ -13,6 +13,7 @@ interface Drawing {
   points: Point[];
   color: string;
   width: number;
+  assetId?: string;
 }
 
 interface DrawingOverlayProps {
@@ -23,6 +24,7 @@ interface DrawingOverlayProps {
   selectedTool: string | null;
   setSelectedTool: (tool: string | null) => void;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  activeAsset: string;
 }
 
 export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
@@ -33,6 +35,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
   selectedTool,
   setSelectedTool,
   containerRef,
+  activeAsset,
 }) => {
   const [activeDrawing, setActiveDrawing] = useState<Drawing | null>(null);
   const [draggingNode, setDraggingNode] = useState<{ drawingId: string, pointIndex: number, type: 'node' | 'body' } | null>(null);
@@ -100,6 +103,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             points: [newPoint],
             color: '#FFE24C',
             width: 2,
+            assetId: activeAsset,
         };
         setDrawings([...drawings, newDrawing]);
         setSelectedTool(null);
@@ -110,6 +114,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             points: [newPoint, newPoint],
             color: '#FFE24C',
             width: 2,
+            assetId: activeAsset,
         };
         setActiveDrawing(newDrawing);
     }
@@ -197,7 +202,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
   };
 
   const renderDrawing = (drawing: Drawing, isGhost = false) => {
-    if (!chart || !containerRef.current) return null;
+    if (!chart || !series || !containerRef.current) return null;
 
     const points = drawing.points.map(p => {
         const x = chart.timeScale().timeToCoordinate(p.time as any);
@@ -373,7 +378,9 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           />
       )}
 
-      {drawings.map(d => renderDrawing(d))}
+      {drawings
+        .filter(d => !d.assetId || d.assetId === activeAsset)
+        .map(d => renderDrawing(d))}
       {activeDrawing && renderDrawing(activeDrawing, true)}
     </svg>
   );

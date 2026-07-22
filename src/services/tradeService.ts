@@ -4,21 +4,62 @@ import { getIO } from './socketService.ts';
 import { createAuditLog } from '../lib/audit.ts';
 import logger from '../lib/logger.ts';
 import { mapUserForFrontend } from '../lib/user-utils.ts';
+import { updateLeaderboardStats, broadcastLeaderboards } from './leaderboardService.ts';
 
 let isSettling = false;
+
+// Global cache for trade exposure: pair_type -> net exposure (positive means UP trades dominate, negative means DOWN trades dominate)
+export const tradeExposureCache = new Map<string, number>();
+
+export async function updateTradeExposureCache() {
+  try {
+    const openTrades = await query(`
+      SELECT market_id, is_demo, direction, SUM(amount) as total 
+      FROM trades 
+      WHERE status = 'open' 
+      GROUP BY market_id, is_demo, direction
+    `) as any[];
+
+    tradeExposureCache.clear();
+    
+    for (const row of openTrades) {
+      const type = row.is_demo ? 'demo' : 'real';
+      const key = `${row.market_id}_${type}`;
+      const amount = parseFloat(row.total);
+      
+      let current = tradeExposureCache.get(key) || 0;
+      if (row.direction === 'up') {
+        current += amount;
+      } else {
+        current -= amount;
+      }
+      tradeExposureCache.set(key, current);
+    }
+  } catch (err) {
+    logger.error('Failed to update trade exposure cache:', err);
+  }
+}
 
 export async function settleExpiredTrades() {
   if (isSettling) return;
   isSettling = true;
+  let broadcastNeeded = false;
   try {
     const now = Math.floor(Date.now() / 1000);
     const expiredTrades = await query(
-      'SELECT id FROM trades WHERE status = ? AND expiry_time <= ?',
+      'SELECT id, is_demo FROM trades WHERE status = ? AND expiry_time <= ?',
       ['open', now]
     ) as any[];
 
     for (const trade of expiredTrades) {
       await settleTrade(trade.id);
+      if (!trade.is_demo) {
+        broadcastNeeded = true;
+      }
+    }
+    
+    if (broadcastNeeded) {
+      broadcastLeaderboards().catch(err => console.error('Broadcast leaderboard error:', err));
     }
   } catch (err) {
     logger.error('Failed to settle expired trades:', err);
@@ -86,6 +127,11 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
         if (!isDemo) {
           await createAuditLog(trade.user_id, 'trade_payout', 'trade', tradeId.toString(), { payoutAmount, newBalance });
         }
+      }
+
+      if (!isDemo) {
+        const profit = payoutAmount - tradeAmount;
+        await updateLeaderboardStats(trade.user_id, newStatus as any, profit, tradeAmount, conn);
       }
 
       return { 

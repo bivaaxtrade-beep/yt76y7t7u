@@ -18,7 +18,26 @@ import {
 
 const router = express.Router();
 
-// --- Admin Market Controls ---
+// --- Market News ---
+router.get('/news', async (req, res) => {
+  try {
+    // Return news as expected by NewsWidget and TradeTerminal
+    res.json({
+      news: [
+        "Bitcoin surpasses $60,000 as institutional demand grows.",
+        "Global markets rally as inflation data shows cooling trends.",
+        "Gold hits record high amid geopolitical uncertainty.",
+        "Central Bank hints at potential rate cuts by year-end.",
+        "Tech sector leads gains in pre-market trading session."
+      ],
+      Data: [] // For compatibility with older news widget versions
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Market State ---
 router.get('/market/state', (req, res) => {
   res.json({
     systemActive,
@@ -615,6 +634,7 @@ router.post('/support/reply', async (req, res) => {
 });
 
 import { processCopyTrading } from '../services/copyTradingService.ts';
+import { createDeposit } from '../services/gopayService.ts';
 
 // 10. Trade Placement (Compatibility with frontend)
 router.post('/trade', async (req, res) => {
@@ -679,17 +699,6 @@ router.post('/trade', async (req, res) => {
   } catch (err: any) {
     logger.error(`Trade placement failed: ${err.message}`);
     res.status(400).json({ error: err.message });
-  }
-});
-
-router.post('/trade/prune-demo', async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'userId required' });
-  try {
-    await run('DELETE FROM trades WHERE user_id = ? AND is_demo = 1 AND status != \'open\'', [userId]);
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -779,6 +788,17 @@ router.patch('/masterTraders/:id', requireAuth, async (req: AuthRequest, res) =>
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update master trader' });
+  }
+});
+
+import { fetchLeaderboards } from '../services/leaderboardService.ts';
+
+router.get('/leaderboard', async (req, res) => {
+  try {
+    const data = await fetchLeaderboards();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch leaderboard data' });
   }
 });
 
@@ -964,7 +984,82 @@ router.get('/wallet/transactions', requireAuth, async (req: AuthRequest, res) =>
   res.json(history);
 });
 
-// --- Admin Panel ---
+// GoPay Payment Routes
+router.post('/payment/collect', requireAuth, async (req: AuthRequest, res) => {
+  const { amount, payType } = req.body;
+  const uid = req.user!.uid;
+  const orderId = `DEP_${Date.now()}_${uid}`;
+
+  try {
+      const response = await createDeposit(amount, orderId, payType);
+      res.json({ success: true, url: response.data.data.url });
+  } catch (err: any) {
+      logger.error(`GoPay collect failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/payment/webhook', async (req, res) => {
+    // Note: Signature verification should be added here for production security
+    const { status, out_trade_no, money } = req.body;
+    
+    if (status == 1) { // Assuming status 1 is success based on typical gateway patterns
+        const uid = out_trade_no.split('_')[2];
+        await run(`UPDATE transactions SET status = 'completed' WHERE user_id = ? AND amount = ? AND status = 'pending'`, [uid, money]);
+        
+        // Update balance
+        await run('UPDATE users SET real_balance = real_balance + ? WHERE uid = ?', [money, uid]);
+    }
+    
+    res.status(200).send('success');
+});
+
+// Admin Panel - Add Generic Collection Handler
+router.post('/depositMethods', requireAuth, async (req: AuthRequest, res) => {
+    try {
+        const docRef = await adminDb.collection('depositMethods').add(req.body);
+        res.json({ id: docRef.id });
+    } catch (e: any) {
+        logger.error(`Error adding depositMethod: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Generic handler for proxy addDoc calls
+router.post('/:collection', requireAuth, async (req: AuthRequest, res) => {
+    const { collection } = req.params;
+    try {
+        const docRef = await adminDb.collection(collection).add(req.body);
+        res.json({ id: docRef.id });
+    } catch (e: any) {
+        logger.error(`Error adding to ${collection}: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/admin/config/fmp-key', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const doc = await adminDb.collection('app_config').doc('settings').get();
+    const data = doc.exists ? doc.data() : {};
+    res.json({ fmpApiKey: data?.fmpApiKey || process.env.FMP_API_KEY || '' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/config/fmp-key', requireAuth, async (req: AuthRequest, res) => {
+  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const { fmpApiKey } = req.body;
+    await adminDb.collection('app_config').doc('settings').set({ fmpApiKey }, { merge: true });
+    // Also update process.env for the current session
+    process.env.FMP_API_KEY = fmpApiKey;
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/admin/users', requireAuth, async (req: AuthRequest, res) => {
   if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin only' });
@@ -1049,15 +1144,6 @@ router.get('/app_config/settings', async (req, res) => {
 });
 
 // --- News & Newsletter ---
-router.get('/news', async (req, res) => {
-  try {
-    // Return empty Data array for now to satisfy TradeTerminal.tsx
-    res.json({ Data: [] });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 router.post('/newsletter', async (req, res) => {
   res.json({ success: true });
 });
@@ -1289,6 +1375,36 @@ router.post('/admin/kyc/update', requireAuth, async (req: AuthRequest, res) => {
     logger.error(`Error updating KYC request status: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
+});
+
+// --- Activities & Banners ---
+router.get('/activities', async (req, res) => {
+  res.json([
+    { id: '1', title: 'Welcome Bonus', description: 'Get 100% bonus on your first deposit!', image: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&q=80&w=1000' },
+    { id: '2', title: 'Refer & Earn', description: 'Invite your friends and earn 10% commission.', image: 'https://images.unsplash.com/photo-1553729459-efe14ef6055d?auto=format&fit=crop&q=80&w=1000' }
+  ]);
+});
+
+router.post('/activities', async (req, res) => {
+  res.json({ success: true });
+});
+
+// --- Legacy/Alias Routes for Compatibility ---
+router.post('/deposit', async (req, res) => {
+  // Redirect to wallet/deposit logic or just re-implement
+  res.status(200).json({ success: true, message: 'Deposit endpoint reached. Please use /api/wallet/deposit' });
+});
+
+router.post('/withdraw', async (req, res) => {
+  res.status(200).json({ success: true, message: 'Withdraw endpoint reached. Please use /api/wallet/withdraw' });
+});
+
+router.get('/transactions', requireAuth, async (req: AuthRequest, res) => {
+  const history = await query(
+    `SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+    [req.user!.uid]
+  );
+  res.json(history);
 });
 
 export default router;

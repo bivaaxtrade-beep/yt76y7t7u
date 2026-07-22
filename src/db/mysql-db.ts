@@ -3,7 +3,12 @@ import path from 'path';
 import fs from 'fs';
 
 import logger from '../lib/logger.ts';
-const dbPath = path.join(process.cwd(), 'database.sqlite');
+
+const dataDir = process.env.DATA_DIR || process.cwd();
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+const dbPath = path.join(dataDir, 'database.sqlite');
 const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency and to prevent database corruption
@@ -42,6 +47,20 @@ CREATE TABLE IF NOT EXISTS users (
   total_live_volume NUMERIC DEFAULT '0.00',
   updated_at INTEGER,
   created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS leaderboard_stats (
+  user_id TEXT PRIMARY KEY,
+  total_profit NUMERIC DEFAULT 0,
+  total_trades INTEGER DEFAULT 0,
+  won_trades INTEGER DEFAULT 0,
+  lost_trades INTEGER DEFAULT 0,
+  draw_trades INTEGER DEFAULT 0,
+  total_volume NUMERIC DEFAULT 0,
+  current_streak INTEGER DEFAULT 0,
+  max_streak INTEGER DEFAULT 0,
+  roi NUMERIC DEFAULT 0,
+  last_trade_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS trades (

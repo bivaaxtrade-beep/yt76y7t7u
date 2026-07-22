@@ -3,6 +3,7 @@
   "appId": "1:1060740495013:web:7514f23efec9381df67f4c",
   "apiKey": "AIzaSyDkqHnpbs98ioSdzQeyIbHtylPsIugR9jg",
   "authDomain": "bvaax-trade.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-bivaxtradingplat-8e7101e2-d4ec-4c3a-a78a-4164b9138c34",
   "storageBucket": "bvaax-trade.firebasestorage.app",
   "messagingSenderId": "1060740495013",
   "measurementId": "",

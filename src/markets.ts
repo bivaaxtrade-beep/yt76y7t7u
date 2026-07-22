@@ -22,6 +22,7 @@ export interface Market {
   maxTradeAmount?: number;
   manipulation?: ManipulationSettings;
   hidden?: boolean;
+  pressure?: number; // -100 to 100
 }
 
 export const markets: Record<string, Market> = {
