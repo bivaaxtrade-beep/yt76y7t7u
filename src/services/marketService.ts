@@ -196,7 +196,7 @@ export async function initializeCandlesFromDB() {
             });
             runTx(oldCandles);
           } else {
-            // Seed brand new initial 5s candles (2000 candles to provide background)
+            // Seed brand new initial 5s candles (200 candles to provide background efficiently)
             console.log(`🌱 Seeding initial 5-second candles for ${pair} (${type})...`);
             const basePrice = markets[pair].price || 100;
             let volatility = markets[pair].volatility || 0.0002;
@@ -207,11 +207,12 @@ export async function initializeCandlesFromDB() {
             // sigma * sqrt(dt) -> dt=5
             const stepVol = volatility * Math.sqrt(5);
             
-            const baseTime = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 5) - 2000 * 5;
+            const seedCount = 200;
+            const baseTime = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 5) - seedCount * 5;
             
             let currentPrice = basePrice;
             const seedRows = [];
-            for (let i = 0; i < 2000; i++) {
+            for (let i = 0; i < seedCount; i++) {
               const time = baseTime + i * 5;
               const isGap = Math.random() < 0.15;
               const gapDirection: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
@@ -325,8 +326,8 @@ export async function initializeCandlesFromDB() {
             const now = Math.floor(Date.now() / 1000);
             const currentBucket = now - (now % tfSeconds);
             
-            // Limit the maximum number of candles filled at startup to prevent lag/memory issues (e.g. 2000 candles)
-            const maxGapCandles = 2000;
+            // Limit the maximum number of candles filled at startup to prevent lag/memory issues
+            const maxGapCandles = 200;
             const actualGapSeconds = currentBucket - latestCandle.closeTime;
             const requiredCandles = Math.floor(actualGapSeconds / tfSeconds);
             

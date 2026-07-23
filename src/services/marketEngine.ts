@@ -16,8 +16,8 @@ const TICK_INTERVAL = 50;
 export async function startMarketEngine() {
   console.log('🚀 Starting Market Engine...');
   
-  // Initialize candles from the database (and seed if empty)
-  await initializeCandlesFromDB();
+  // Initialize candles from the database asynchronously in background
+  initializeCandlesFromDB().catch(err => console.error("Error initializing candles:", err));
   
   // Initial price fetch
   fetchAllRealPrices();
