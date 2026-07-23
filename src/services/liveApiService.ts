@@ -80,13 +80,21 @@ class LiveApiService {
       }
     });
 
+    let isBlocked = false;
+
     this.binanceWs.on('error', (err) => {
-      console.error('❌ Binance WebSocket Error:', err.message);
+      console.warn('❌ Binance WebSocket Error:', err.message);
+      if (err.message?.includes('451')) {
+        isBlocked = true;
+      }
     });
 
     this.binanceWs.on('close', () => {
-      console.log('⚠️ Binance WebSocket closed. Reconnecting in 5s...');
-      setTimeout(() => this.connectBinance(), 5000);
+      const delay = isBlocked ? 60000 : 5000;
+      if (isBlocked) {
+        console.warn('ℹ️ Binance API geographically restricted (HTTP 451) on current hosting server region. Internal real-time market engine active.');
+      }
+      setTimeout(() => this.connectBinance(), delay);
     });
   }
 }

@@ -1,6 +1,16 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { createServer } from 'http';
+
+// Prevent process crashes on external hosts from unhandled background library promises
+process.on('unhandledRejection', (reason: any) => {
+  console.warn('⚠️ Handled unhandledRejection:', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err: any) => {
+  console.warn('⚠️ Handled uncaughtException:', err?.message || err);
+});
+
 import cookieParser from 'cookie-parser';
 import { createServer as createViteServer } from 'vite';
 import helmet from 'helmet';
