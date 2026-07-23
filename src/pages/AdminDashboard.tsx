@@ -23,6 +23,7 @@ import {
 } from 'recharts';
 import { AssetLogo } from '../components/AssetLogo';
 import { MarketControlCard } from '../components/MarketControlCard';
+import { AgentSupportHub } from '../components/AgentSupportHub';
 
 type Role = 'superadmin' | 'admin' | 'moderator' | 'support' | 'user';
 type PermissionKey = 'canManageUsers' | 'canManageStaff' | 'canManageFinance' | 'canManageContent' | 'canManageMarkets' | 'canManageSystem';
@@ -457,7 +458,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!adminSelectedTicket) {
-      setAdminTicketMessages([]);
+      setAdminTicketMessages(prev => prev.length === 0 ? prev : []);
       return;
     }
     
@@ -479,7 +480,7 @@ export default function AdminDashboard() {
     );
     
     return () => unsubMessages();
-  }, [adminSelectedTicket]);
+  }, [adminSelectedTicket?.id]);
 
   // Actions
   const rawAdminEmail = import.meta.env.VITE_ADMIN_EMAIL;
@@ -502,8 +503,8 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!selectedUserDetail) {
-      setSelectedUserTrades([]);
-      setSelectedUserTransactions([]);
+      setSelectedUserTrades(prev => prev.length === 0 ? prev : []);
+      setSelectedUserTransactions(prev => prev.length === 0 ? prev : []);
       return;
     }
 
@@ -2280,120 +2281,11 @@ export default function AdminDashboard() {
            )}
 
            {activeTab === 'tickets' && (
-               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                       <div>
-                           <h2 className="text-3xl font-black uppercase tracking-tight mb-2">Support Tickets</h2>
-                           <p className="text-gray-500">Manage customer support requests and replies.</p>
-                       </div>
-                   </div>
+               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                   <AgentSupportHub currentUser={auth.currentUser} userRole={userRole} />
+               </motion.div>
+           )}
 
-                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-                       {/* TICKETS LIST */}
-                       <div className="xl:col-span-1 space-y-4">
-                           <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-[32px] p-2 max-h-[70vh] overflow-y-auto custom-scrollbar shadow-xl">
-                               {tickets.length === 0 ? (
-                                   <div className="p-8 text-center text-gray-500">No tickets found</div>
-                               ) : (
-                                   tickets.map((t, idx) => (
-                                       <button 
-                                           key={`admin-ticket-${idx}-${t.id || 't-' + idx}`}
-                                           onClick={() => setAdminSelectedTicket(t)}
-                                           className={`w-full text-left p-5 rounded-2xl transition-all border mb-2 last:mb-0 ${
-                                               adminSelectedTicket?.id === t.id ? 'bg-yellow-500/10 border-yellow-500/50' : 'border-transparent hover:bg-white/5'
-                                           }`}
-                                       >
-                                           <div className="flex justify-between items-start mb-2">
-                                               <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
-                                                   t.status === 'open' ? 'bg-blue-500 text-white' : 
-                                                   t.status === 'pending' ? 'bg-yellow-500 text-black' : 
-                                                   'bg-gray-800 text-gray-400'
-                                               }`}>
-                                                   {t.status}
-                                               </span>
-                                               <span className="text-[10px] text-gray-500 font-mono">
-                                                   {new Date(t.updatedAt).toLocaleDateString()}
-                                               </span>
-                                           </div>
-                                           <h4 className="font-bold text-[14px] line-clamp-1 mb-1">{t.subject}</h4>
-                                           <p className="text-[11px] text-gray-500 truncate">{t.userName} ({t.userEmail})</p>
-                                       </button>
-                                   ))
-                               )}
-                           </div>
-                       </div>
-
-                       {/* TICKET DETAIL / CHAT */}
-                       <div className="xl:col-span-2">
-                           {adminSelectedTicket ? (
-                               <div className="bg-[#0a0a0f] border border-[#1a1a24] rounded-[40px] flex flex-col h-[70vh] shadow-2xl relative overflow-hidden">
-                                   <div className="p-6 border-b border-[#1a1a24] flex justify-between items-center bg-black/20 backdrop-blur-md sticky top-0 z-10">
-                                       <div>
-                                           <h3 className="font-black text-lg uppercase tracking-tight">{adminSelectedTicket.subject}</h3>
-                                           <p className="text-xs text-gray-500">{adminSelectedTicket.userName} • {adminSelectedTicket.userEmail}</p>
-                                       </div>
-                                       <div className="flex items-center gap-2">
-                                           <select 
-                                               value={adminSelectedTicket.status}
-                                               onChange={(e) => updateTicketStatus(adminSelectedTicket.id, e.target.value)}
-                                               className="bg-[#15161d] border border-[#1a1a24] rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-yellow-500 text-white"
-                                           >
-                                               <option value="open">Open</option>
-                                               <option value="pending">Pending</option>
-                                               <option value="closed">Closed</option>
-                                           </select>
-                                       </div>
-                                   </div>
-
-                                   <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
-                                       {adminTicketMessages.map((m, idx) => {
-                                           const isStaff = m.senderType === 'support';
-                                           return (
-                                               <div key={`${idx}-${m.id || m.timestamp || 'msg'}`} className={`flex ${isStaff ? 'justify-end' : 'justify-start'}`}>
-                                                   <div className={`max-w-[80%] p-4 rounded-2xl ${
-                                                       isStaff ? 'bg-yellow-500 text-black rounded-tr-none' : 'bg-[#15161d] border border-[#1a1a24] text-white rounded-tl-none'
-                                                   }`}>
-                                                       <p className="text-sm whitespace-pre-wrap">{m.text}</p>
-                                                       <span className={`text-[9px] mt-2 block opacity-50 font-bold ${isStaff ? 'text-black' : 'text-gray-500'}`}>
-                                                           {new Date(m.createdAt).toLocaleString()}
-                                                       </span>
-                                                   </div>
-                                               </div>
-                                           );
-                                       })}
-                                       <div ref={adminMessagesEndRef} />
-                                   </div>
-
-                                   <div className="p-6 border-t border-[#1a1a24] bg-black/20 sticky bottom-0">
-                                       <div className="flex gap-4">
-                                           <textarea 
-                                               value={adminTicketReply}
-                                               onChange={(e) => setAdminTicketReply(e.target.value)}
-                                               placeholder="Type your response..."
-                                               className="flex-1 bg-[#15161d] border border-[#1a1a24] rounded-2xl px-5 py-3 text-sm focus:border-yellow-500 outline-none resize-none h-20 custom-scrollbar text-white"
-                                           />
-                                           <button 
-                                               onClick={sendAdminReply}
-                                               disabled={!adminTicketReply.trim()}
-                                               className={`px-8 rounded-2xl font-black text-sm transition-all ${
-                                                   adminTicketReply.trim() ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/20 active:scale-95' : 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                               }`}
-                                           >
-                                               REPLY
-                                           </button>
-                                       </div>
-                                   </div>
-                               </div>
-                           ) : (
-                               <div className="h-[70vh] flex flex-col items-center justify-center text-gray-600 bg-black/10 border border-dashed border-[#1a1a24] rounded-[40px]">
-                                   <MessageCircle size={64} className="mb-4 opacity-10" />
-                                   <p className="font-bold uppercase tracking-widest text-sm">Select a ticket to view conversation</p>
-                               </div>
-                           )}
-                       </div>
-                   </div>
-                              </motion.div>
-            )}
             {activeTab === 'pages' && (
               <motion.div key="pages" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <div className="flex justify-between items-end mb-6">

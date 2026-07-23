@@ -94,13 +94,20 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
             // Live Copied Portfolios Subscription from API
             const fetchCopies = async () => {
                 try {
+                    const token = localStorage.getItem('bivax_token');
+                    if (!token || token === 'null' || token === 'undefined') {
+                        return;
+                    }
+                    if (!user || !user.uid) {
+                        return;
+                    }
                     const response = await fetch(`/api/users/${user.uid}/activeCopies`, {
-                        headers: { 'Authorization': `Bearer ${localStorage.getItem('bivax_token')}` }
+                        headers: { 'Authorization': `Bearer ${token}` }
                     });
                     if (response.ok) {
                         const data = await response.json();
                         // Map SQL names to frontend names if needed
-                        const mapped = data.map((c: any) => ({
+                        const mapped = (Array.isArray(data) ? data : []).map((c: any) => ({
                             ...c,
                             masterName: c.master_name,
                             masterId: c.master_id,
@@ -109,9 +116,14 @@ export default function CopyTrading({ hideHeader = false }: { hideHeader?: boole
                             startedAt: c.started_at
                         }));
                         setActiveCopies(mapped);
+                    } else if (response.status === 401 || response.status === 403) {
+                        console.warn("Unauthorized/Forbidden: Skipping copy portfolios sync.");
+                    } else {
+                        console.warn("Failed to load active copies. Status:", response.status);
                     }
-                } catch (err) {
-                    console.error("Error loading active portfolios:", err);
+                } catch (err: any) {
+                    // Fail gracefully and avoid flooding the logs
+                    console.warn("Could not fetch active portfolios, will retry:", err.message || err);
                 }
             };
             fetchCopies();

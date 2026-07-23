@@ -141,11 +141,24 @@ CREATE TABLE IF NOT EXISTS kyc_requests (
 CREATE TABLE IF NOT EXISTS tickets (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
+  user_name TEXT,
+  user_email TEXT,
   subject TEXT NOT NULL,
+  category TEXT DEFAULT 'General',
   message TEXT NOT NULL,
   last_message TEXT,
   status TEXT DEFAULT 'open',
   priority TEXT DEFAULT 'medium',
+  assigned_agent_id TEXT,
+  assigned_agent_name TEXT,
+  assigned_agent_email TEXT,
+  channel TEXT DEFAULT 'chat',
+  rating INTEGER,
+  rating_feedback TEXT,
+  is_ai_handled INTEGER DEFAULT 1,
+  closed_at INTEGER,
+  first_response_at INTEGER,
+  resolved_at INTEGER,
   updated_at INTEGER,
   created_at INTEGER
 );
@@ -154,9 +167,35 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
   id TEXT PRIMARY KEY,
   ticket_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
+  sender_type TEXT DEFAULT 'user',
+  sender_name TEXT,
   message TEXT NOT NULL,
+  attachments TEXT,
+  is_internal_note INTEGER DEFAULT 0,
+  is_read INTEGER DEFAULT 0,
   is_admin INTEGER DEFAULT 0,
   created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS support_canned_responses (
+  id TEXT PRIMARY KEY,
+  shortcut TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  category TEXT DEFAULT 'General',
+  content TEXT NOT NULL,
+  created_by TEXT,
+  created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS agent_profiles (
+  user_id TEXT PRIMARY KEY,
+  name TEXT,
+  email TEXT,
+  role TEXT DEFAULT 'support_agent',
+  is_online INTEGER DEFAULT 1,
+  max_chats INTEGER DEFAULT 5,
+  active_chats_count INTEGER DEFAULT 0,
+  last_active_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS active_copies (
   id TEXT PRIMARY KEY,
@@ -199,6 +238,35 @@ CREATE TABLE IF NOT EXISTS candles (
 
 CREATE UNIQUE INDEX IF NOT EXISTS pair_type_time_idx ON candles (pair, type, time);
 `);
+
+// Auto-migrate missing columns for support system
+const addColIfMissing = (table: string, colDef: string) => {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${colDef}`);
+  } catch (e) {
+    // Column likely exists
+  }
+};
+
+addColIfMissing('tickets', 'user_name TEXT');
+addColIfMissing('tickets', 'user_email TEXT');
+addColIfMissing('tickets', "category TEXT DEFAULT 'General'");
+addColIfMissing('tickets', 'assigned_agent_id TEXT');
+addColIfMissing('tickets', 'assigned_agent_name TEXT');
+addColIfMissing('tickets', 'assigned_agent_email TEXT');
+addColIfMissing('tickets', "channel TEXT DEFAULT 'chat'");
+addColIfMissing('tickets', 'rating INTEGER');
+addColIfMissing('tickets', 'rating_feedback TEXT');
+addColIfMissing('tickets', 'is_ai_handled INTEGER DEFAULT 1');
+addColIfMissing('tickets', 'closed_at INTEGER');
+addColIfMissing('tickets', 'first_response_at INTEGER');
+addColIfMissing('tickets', 'resolved_at INTEGER');
+
+addColIfMissing('ticket_messages', "sender_type TEXT DEFAULT 'user'");
+addColIfMissing('ticket_messages', 'sender_name TEXT');
+addColIfMissing('ticket_messages', 'attachments TEXT');
+addColIfMissing('ticket_messages', 'is_internal_note INTEGER DEFAULT 0');
+addColIfMissing('ticket_messages', 'is_read INTEGER DEFAULT 0');
 
 // Helper to convert '?' placeholders (SQLite uses '?' so no change needed)
 // However, we might need to handle some MySQL specific syntax if it exists.

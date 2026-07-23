@@ -39,14 +39,14 @@ async function startServer() {
   // Rate Limiting
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 2000,
+    max: 10000, // Increased for dev/heavy use
     message: { error: 'Too many requests, please try again later.' }
   });
   app.use('/api/', limiter);
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 10, // Max 10 login/register attempts per 15 minutes
+    max: 100, // Increased for dev
     message: { error: 'Too many login/register attempts. Please try again after 15 minutes.' }
   });
   app.use('/api/auth/', authLimiter);
@@ -61,6 +61,11 @@ async function startServer() {
   // Health Check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Catch-all for missing API endpoints to prevent returning HTML for API calls
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ error: 'API endpoint not found', path: req.path });
   });
 
   // SEO: robots.txt

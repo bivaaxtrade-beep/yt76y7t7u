@@ -6,8 +6,8 @@ export default function MarketTicker() {
 
   useEffect(() => {
     fetch('/api/news')
-      .then(res => res.json())
-      .then(data => setNews(data.news))
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data && Array.isArray(data.news)) setNews(data.news); })
       .catch(err => console.error("Failed to fetch news:", err));
   }, []);
 
@@ -19,7 +19,7 @@ export default function MarketTicker() {
         className="flex gap-16 whitespace-nowrap"
         initial={{ x: '100%' }}
         animate={{ x: '-100%' }}
-        transition={{ repeat: Infinity, duration: 40, ease: 'linear' }}
+        transition={{ repeat: Infinity, duration: 150, ease: 'linear' }}
       >
         {[...news, ...news].map((headline, i) => (
           <span key={i} className="text-sm font-medium text-gray-400">

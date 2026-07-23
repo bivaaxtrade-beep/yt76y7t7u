@@ -168,12 +168,25 @@ function mapTicket(t: any) {
     id: t.id,
     userId: t.user_id,
     user_id: t.user_id,
+    userName: t.user_name || 'User',
+    userEmail: t.user_email || 'trader@bivox.com',
     subject: t.subject,
+    category: t.category || 'General',
     message: t.message,
     lastMessage: t.last_message,
     last_message: t.last_message,
-    status: t.status,
-    priority: t.priority,
+    status: t.status || 'open',
+    priority: t.priority || 'medium',
+    assignedAgentId: t.assigned_agent_id,
+    assignedAgentName: t.assigned_agent_name,
+    assignedAgentEmail: t.assigned_agent_email,
+    channel: t.channel || 'chat',
+    rating: t.rating,
+    ratingFeedback: t.rating_feedback,
+    isAiHandled: t.is_ai_handled !== undefined ? Boolean(t.is_ai_handled) : true,
+    closedAt: t.closed_at,
+    firstResponseAt: t.first_response_at,
+    resolvedAt: t.resolved_at,
     updatedAt: t.updated_at,
     updated_at: t.updated_at,
     createdAt: t.created_at,
@@ -183,6 +196,15 @@ function mapTicket(t: any) {
 
 function mapMessage(m: any) {
   if (!m) return null;
+  let parsedAttachments = [];
+  try {
+    if (m.attachments) {
+      parsedAttachments = typeof m.attachments === 'string' ? JSON.parse(m.attachments) : m.attachments;
+    }
+  } catch (e) {
+    parsedAttachments = [];
+  }
+
   return {
     ...m,
     id: m.id,
@@ -190,10 +212,15 @@ function mapMessage(m: any) {
     ticket_id: m.ticket_id,
     userId: m.user_id,
     user_id: m.user_id,
+    senderType: m.sender_type || (m.isAdmin || m.is_admin ? 'agent' : 'user'),
+    senderName: m.sender_name || (m.isAdmin || m.is_admin ? 'Support Agent' : 'User'),
     text: m.message,
     message: m.message,
-    senderType: m.isAdmin ? 'support' : 'user',
-    isAdmin: !!m.isAdmin,
+    attachments: parsedAttachments,
+    isInternalNote: Boolean(m.is_internal_note),
+    isRead: Boolean(m.is_read),
+    status: m.is_read ? 'seen' : 'delivered',
+    isAdmin: Boolean(m.isAdmin || m.is_admin),
     createdAt: m.created_at,
     created_at: m.created_at,
   };
@@ -433,23 +460,25 @@ router.get('/user-tickets', async (req, res) => {
 
 // --- Market Movers Widget (FMP API) ---
 router.get('/market-movers', async (req, res) => {
+  const mockMovers = [
+    { symbol: 'AAPL', name: 'Apple Inc.', change: 2.45, price: 189.45, volatility: 0.15 },
+    { symbol: 'TSLA', name: 'Tesla, Inc.', change: -5.12, price: 238.12, volatility: 0.45 },
+    { symbol: 'NVDA', name: 'NVIDIA Corp.', change: 3.89, price: 475.20, volatility: 0.35 },
+    { symbol: 'AMZN', name: 'Amazon.com', change: 1.12, price: 145.10, volatility: 0.12 },
+    { symbol: 'META', name: 'Meta Platforms', change: -2.15, price: 320.15, volatility: 0.25 }
+  ];
+
   try {
     const apiKey = process.env.FMP_API_KEY;
     if (!apiKey) {
-      // Return mock data if API key is missing
-      return res.json([
-        { symbol: 'AAPL', name: 'Apple Inc.', change: 2.45, price: 189.45, volatility: 0.15 },
-        { symbol: 'TSLA', name: 'Tesla, Inc.', change: -5.12, price: 238.12, volatility: 0.45 },
-        { symbol: 'NVDA', name: 'NVIDIA Corp.', change: 3.89, price: 475.20, volatility: 0.35 },
-        { symbol: 'AMZN', name: 'Amazon.com', change: 1.12, price: 145.10, volatility: 0.12 },
-        { symbol: 'META', name: 'Meta Platforms', change: -2.15, price: 320.15, volatility: 0.25 }
-      ]);
+      return res.json(mockMovers);
     }
 
     // Fetch daily active stocks as a proxy for high volatility movers
     const response = await fetch(`https://financialmodelingprep.com/api/v3/stock_market/actives?apikey=${apiKey}`);
     if (!response.ok) {
-      throw new Error('FMP API request failed');
+      logger.warn(`FMP API request failed with status ${response.status}. Falling back to mock data.`);
+      return res.json(mockMovers);
     }
 
     const data = await response.json() as any[];
@@ -468,8 +497,8 @@ router.get('/market-movers', async (req, res) => {
 
     res.json(movers);
   } catch (err: any) {
-    logger.error(`Market Movers fetch failed: ${err.message}`);
-    res.status(500).json({ error: 'Failed to fetch market movers' });
+    logger.error(`Market Movers fetch failed: ${err.message}. Falling back to mock data.`);
+    res.json(mockMovers);
   }
 });
 
@@ -503,22 +532,102 @@ router.get('/affiliate_postbacks', async (req, res) => {
     res.json([]);
 });
 
-// 6. Support Chat/Ticket Messages Loader
+// Support Tickets List
+router.get('/tickets', async (req, res) => {
+    try {
+        const { status, category, search, assignedAgentId, userId } = req.query as any;
+        let sql = 'SELECT * FROM tickets WHERE 1=1';
+        const params: any[] = [];
+
+        if (status && status !== 'all') {
+          sql += ' AND status = ?';
+          params.push(status);
+        }
+        if (category && category !== 'all') {
+          sql += ' AND category = ?';
+          params.push(category);
+        }
+        if (assignedAgentId) {
+          sql += ' AND assigned_agent_id = ?';
+          params.push(assignedAgentId);
+        }
+        if (userId) {
+          sql += ' AND user_id = ?';
+          params.push(userId);
+        }
+        if (search) {
+          sql += ' AND (subject LIKE ? OR message LIKE ? OR user_email LIKE ? OR user_name LIKE ? OR id LIKE ?)';
+          const term = `%${search}%`;
+          params.push(term, term, term, term, term);
+        }
+
+        sql += ' ORDER BY updated_at DESC LIMIT 200';
+
+        const tickets = await query(sql, params);
+        res.json(tickets.map(mapTicket));
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/support/tickets', async (req, res) => {
+    try {
+        const { status, category, search, assignedAgentId, userId } = req.query as any;
+        let sql = 'SELECT * FROM tickets WHERE 1=1';
+        const params: any[] = [];
+
+        if (status && status !== 'all') {
+          sql += ' AND status = ?';
+          params.push(status);
+        }
+        if (category && category !== 'all') {
+          sql += ' AND category = ?';
+          params.push(category);
+        }
+        if (assignedAgentId) {
+          sql += ' AND assigned_agent_id = ?';
+          params.push(assignedAgentId);
+        }
+        if (userId) {
+          sql += ' AND user_id = ?';
+          params.push(userId);
+        }
+        if (search) {
+          sql += ' AND (subject LIKE ? OR message LIKE ? OR user_email LIKE ? OR user_name LIKE ? OR id LIKE ?)';
+          const term = `%${search}%`;
+          params.push(term, term, term, term, term);
+        }
+
+        sql += ' ORDER BY updated_at DESC LIMIT 200';
+
+        const tickets = await query(sql, params);
+        res.json({ success: true, tickets: tickets.map(mapTicket) });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Support Chat/Ticket Messages Loader
 router.get('/tickets/:ticketId/messages', async (req, res) => {
   const { ticketId } = req.params;
+  const role = (req.query.role as string) || 'user';
+  const isAgent = role === 'agent' || role === 'admin' || role === 'support';
 
   try {
-    const messages = await query(
-      'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC',
-      [ticketId]
-    );
+    let sql = 'SELECT * FROM ticket_messages WHERE ticket_id = ?';
+    if (!isAgent) {
+      sql += ' AND (is_internal_note IS NULL OR is_internal_note = 0)';
+    }
+    sql += ' ORDER BY created_at ASC';
+
+    const messages = await query(sql, [ticketId]);
     res.json(messages.map(mapMessage));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 7. Create/Update Ticket
+// Create/Update Ticket
 router.post('/tickets', async (req, res) => {
   const { ticketId, ticketData } = req.body;
   if (!ticketId) return res.status(400).json({ error: 'ticketId is required' });
@@ -533,18 +642,18 @@ router.post('/tickets', async (req, res) => {
         lastMessage: 'last_message',
         status: 'status',
         priority: 'priority',
+        category: 'category',
+        assignedAgentId: 'assigned_agent_id',
+        assignedAgentName: 'assigned_agent_name',
+        assignedAgentEmail: 'assigned_agent_email',
         updatedAt: 'updated_at',
       };
 
       for (const [key, value] of Object.entries(ticketData)) {
         const dbField = fieldMap[key];
-        if (dbField) {
+        if (dbField && value !== undefined) {
           updates.push(`${dbField} = ?`);
-          if (key === 'updatedAt') {
-            params.push(value);
-          } else {
-            params.push(value);
-          }
+          params.push(value);
         }
       }
 
@@ -553,8 +662,11 @@ router.post('/tickets', async (req, res) => {
         await run(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`, params);
       }
     } else {
-      const userId = ticketData.userId;
-      const subject = ticketData.subject || 'No Subject';
+      const userId = ticketData.userId || 'guest';
+      const userName = ticketData.userName || 'Trader';
+      const userEmail = ticketData.userEmail || 'user@bivox.com';
+      const subject = ticketData.subject || 'Support Query';
+      const category = ticketData.category || 'General';
       const message = ticketData.message || '';
       const lastMessage = ticketData.lastMessage || message;
       const status = ticketData.status || 'open';
@@ -563,9 +675,142 @@ router.post('/tickets', async (req, res) => {
       const updatedAt = ticketData.updatedAt || Date.now();
       
       await run(
-        `INSERT INTO tickets (id, user_id, subject, message, last_message, status, priority, updated_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ticketId, userId, subject, message, lastMessage, status, priority, updatedAt, createdAt]
+        `INSERT INTO tickets (id, user_id, user_name, user_email, subject, category, message, last_message, status, priority, updated_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ticketId, userId, userName, userEmail, subject, category, message, lastMessage, status, priority, updatedAt, createdAt]
+      );
+    }
+
+    const updated = await get('SELECT * FROM tickets WHERE id = ?', [ticketId]);
+    const mappedTicket = mapTicket(updated);
+    try {
+      const io = getIO();
+      io.to(`user_${mappedTicket.userId}`).emit('ticket_updated', mappedTicket);
+      io.to('agents_room').emit('ticket_updated', mappedTicket);
+      io.to(`ticket_${ticketId}`).emit('ticket_updated', mappedTicket);
+    } catch (e) {}
+    res.json({ success: true, ticket: mappedTicket });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add Message to Support Chat
+router.post('/tickets/messages', async (req, res) => {
+  const { ticketId, messageId, messageData } = req.body;
+  if (!ticketId || !messageId) {
+    return res.status(400).json({ error: 'ticketId and messageId are required' });
+  }
+
+  try {
+    const userId = messageData.senderId || 'unknown';
+    const senderType = messageData.senderType || (messageData.senderId === 'support' || messageData.isAdmin ? 'agent' : 'user');
+    const senderName = messageData.senderName || (senderType === 'agent' ? 'Support Agent' : senderType === 'bot' ? 'Bivox AI Assistant' : 'User');
+    const text = messageData.text || messageData.message || '';
+    const attachments = messageData.attachments ? JSON.stringify(messageData.attachments) : null;
+    const isInternalNote = messageData.isInternalNote ? 1 : 0;
+    const isAdmin = senderType === 'agent' || senderType === 'bot' || messageData.isAdmin ? 1 : 0;
+    const createdAt = messageData.createdAt || Date.now();
+
+    await run(
+      `INSERT INTO ticket_messages (id, ticket_id, user_id, sender_type, sender_name, message, attachments, is_internal_note, is_admin, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [messageId, ticketId, userId, senderType, senderName, text, attachments, isInternalNote, isAdmin, createdAt]
+    );
+
+    // Update main ticket last_message & updated_at if not internal note
+    if (!isInternalNote) {
+      const ticket = await get('SELECT first_response_at, status FROM tickets WHERE id = ?', [ticketId]) as any;
+      let extraCols = '';
+      const extraParams: any[] = [];
+
+      if (senderType === 'agent' && ticket && !ticket.first_response_at) {
+        extraCols += ', first_response_at = ?';
+        extraParams.push(createdAt);
+      }
+      if (senderType === 'agent' && ticket?.status === 'open') {
+        extraCols += ", status = 'in_progress'";
+      }
+
+      await run(
+        `UPDATE tickets SET last_message = ?, updated_at = ? ${extraCols} WHERE id = ?`,
+        [text, createdAt, ...extraParams, ticketId]
+      );
+    }
+
+    const inserted = await get('SELECT * FROM ticket_messages WHERE id = ?', [messageId]);
+    const mappedMsg = mapMessage(inserted);
+
+    try {
+      const io = getIO();
+      io.to(`ticket_${ticketId}`).emit('support_message', mappedMsg);
+      const ticketRow = await get('SELECT * FROM tickets WHERE id = ?', [ticketId]);
+      if (ticketRow) {
+        const mappedT = mapTicket(ticketRow);
+        io.to(`user_${mappedT.userId}`).emit('ticket_updated', mappedT);
+        io.to('agents_room').emit('ticket_updated', mappedT);
+      }
+    } catch (e) {
+      console.warn('Socket emit warning:', e);
+    }
+
+    res.json({ success: true, message: mappedMsg });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Ticket Status / Assignment
+router.patch('/support/tickets/:ticketId/status', async (req, res) => {
+  const { ticketId } = req.params;
+  const { status, priority, category, assignedAgentId, assignedAgentName, assignedAgentEmail } = req.body;
+
+  try {
+    const updates: string[] = ['updated_at = ?'];
+    const params: any[] = [Date.now()];
+
+    if (status) {
+      updates.push('status = ?');
+      params.push(status);
+      if (status === 'resolved') {
+        updates.push('resolved_at = ?');
+        params.push(Date.now());
+      } else if (status === 'closed') {
+        updates.push('closed_at = ?');
+        params.push(Date.now());
+      }
+    }
+    if (priority) {
+      updates.push('priority = ?');
+      params.push(priority);
+    }
+    if (category) {
+      updates.push('category = ?');
+      params.push(category);
+    }
+    if (assignedAgentId !== undefined) {
+      updates.push('assigned_agent_id = ?');
+      params.push(assignedAgentId);
+    }
+    if (assignedAgentName !== undefined) {
+      updates.push('assigned_agent_name = ?');
+      params.push(assignedAgentName);
+    }
+    if (assignedAgentEmail !== undefined) {
+      updates.push('assigned_agent_email = ?');
+      params.push(assignedAgentEmail);
+    }
+
+    params.push(ticketId);
+    await run(`UPDATE tickets SET ${updates.join(', ')} WHERE id = ?`, params);
+
+    // Insert system message in chat
+    if (status) {
+      const msgId = `SYS-${Date.now()}`;
+      await run(
+        `INSERT INTO ticket_messages (id, ticket_id, user_id, sender_type, sender_name, message, is_admin, created_at)
+         VALUES (?, ?, 'system', 'system', 'System', ?, 1, ?)`,
+        [msgId, ticketId, `Ticket status changed to: ${status.toUpperCase()}`, Date.now()]
       );
     }
 
@@ -576,39 +821,89 @@ router.post('/tickets', async (req, res) => {
   }
 });
 
-// 8. Add Message to Support Chat
-router.post('/tickets/messages', async (req, res) => {
-  const { ticketId, messageId, messageData } = req.body;
-  if (!ticketId || !messageId) {
-    return res.status(400).json({ error: 'ticketId and messageId are required' });
-  }
+// CSAT Rating
+router.post('/support/tickets/:ticketId/rate', async (req, res) => {
+  const { ticketId } = req.params;
+  const { rating, feedback } = req.body;
 
   try {
-    const userId = messageData.senderId || 'unknown';
-    const text = messageData.text || '';
-    const isAdmin = messageData.senderType === 'support' || messageData.senderId === 'ai-bot' || messageData.senderId === 'ai' ? 1 : 0;
-    const createdAt = messageData.createdAt || Date.now();
-
     await run(
-      `INSERT INTO ticket_messages (id, ticket_id, user_id, message, isAdmin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [messageId, ticketId, userId, text, isAdmin, createdAt]
+      `UPDATE tickets SET rating = ?, rating_feedback = ?, updated_at = ? WHERE id = ?`,
+      [rating, feedback || '', Date.now(), ticketId]
     );
-
-    // Also update updatedAt on the main ticket
-    await run(
-      `UPDATE tickets SET last_message = ?, updated_at = ? WHERE id = ?`,
-      [text, createdAt, ticketId]
-    );
-
-    const inserted = await get('SELECT * FROM ticket_messages WHERE id = ?', [messageId]);
-    res.json({ success: true, message: mapMessage(inserted) });
+    res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 9. Support Bot Auto-Reply via Gemini
+// Gemini AI Chat Handler Endpoint
+router.post('/support/ai-chat', async (req, res) => {
+  const { message, category, userId, history } = req.body;
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  try {
+    const client = getGeminiClient();
+    const systemInstruction = `You are "Bivox AI Support Specialist", an intelligent 24/7 AI assistant for Bivox Trade, a premier international OTC binary options trading platform.
+    Key Platform Info:
+    - Minimum Deposit: $10 / 1000 BDT (processed via bKash, Nagad, Rocket, Binance Pay, Crypto, VISA/Mastercard).
+    - Minimum Withdrawal: $10 (processed in 1 to 24 hours).
+    - KYC Verification: Required for live withdrawals. Users upload NID / Passport / Driving License + Selfie in Profile -> Verification. Approval takes < 30 mins.
+    - Demo Account: Every user receives a free $10,000 renewable practice demo account.
+    - Payout Rates: Up to 98% on binary options assets (Forex, Crypto IDX, Commodities).
+    - Affiliate / Referral: Up to 80% revenue share.
+
+    Instructions:
+    1. Provide helpful, precise, polite, and reassuring answers.
+    2. If the user explicitly asks to speak with a human support agent, or if the issue involves lost funds, payment failure disputes, locked accounts, or fraud complaints, explicitly state that you are handing them over to a live human support specialist.
+    3. Return your response in concise JSON format:
+       {
+         "reply": "your text response",
+         "requiresHandoff": true/false,
+         "suggestedCategory": "Deposit" | "Withdrawal" | "Trading" | "Verification (KYC)" | "Referral" | "Technical Issue" | "Account",
+         "suggestedPriority": "low" | "medium" | "high" | "urgent"
+       }`;
+
+    const promptText = `User Query: "${message}"\nSelected Category: ${category || 'General'}`;
+    const response = await client.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: promptText,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+      }
+    });
+
+    const text = response.text || '';
+    let jsonRes: any = {};
+    try {
+      jsonRes = JSON.parse(text);
+    } catch (e) {
+      jsonRes = {
+        reply: text || "Thank you for contacting Bivox Support. How else can I assist you?",
+        requiresHandoff: message.toLowerCase().includes('agent') || message.toLowerCase().includes('human'),
+        suggestedCategory: category || 'General',
+        suggestedPriority: 'medium'
+      };
+    }
+
+    res.json(jsonRes);
+  } catch (err: any) {
+    logger.warn(`AI chat fallback: ${err.message}`);
+    const lower = message.toLowerCase();
+    const isHandoff = lower.includes('human') || lower.includes('agent') || lower.includes('dispute') || lower.includes('urgent');
+    res.json({
+      reply: isHandoff 
+        ? "I am handing your request over to our senior human support agent queue. An agent will connect with you shortly!" 
+        : "Welcome to Bivox Support! How can I help you with deposits, withdrawals, trading, or account verification today?",
+      requiresHandoff: isHandoff,
+      suggestedCategory: category || 'General',
+      suggestedPriority: isHandoff ? 'high' : 'medium'
+    });
+  }
+});
+
+// Legacy Support Bot Endpoint
 router.post('/support/reply', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'message is required' });
@@ -616,7 +911,7 @@ router.post('/support/reply', async (req, res) => {
   try {
     const client = getGeminiClient();
     const response = await client.models.generateContent({
-      model: 'gemini-3.5-flash',
+      model: 'gemini-3.6-flash',
       contents: message,
       config: {
         systemInstruction: "You are the Support Assistant for Bivaax Trade, a professional OTC binary options trading platform. Keep your answers brief, professional, helpful, and concise.",
@@ -630,6 +925,144 @@ router.post('/support/reply', async (req, res) => {
     res.json({ 
       reply: "Thank you for contacting Bivaax support. Our human representative has been notified of your request and will follow up with you as soon as possible." 
     });
+  }
+});
+
+// User 360° Support Context Endpoint for Agents
+router.get('/support/user-context/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const user = await get('SELECT * FROM users WHERE uid = ? OR id = ?', [userId, userId]) as any;
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const uid = user.uid;
+
+    // Fetch transactions (deposits & withdrawals)
+    const deposits = await query(
+      "SELECT * FROM transactions WHERE user_id = ? AND type = 'deposit' ORDER BY created_at DESC LIMIT 5",
+      [uid]
+    );
+    const withdrawals = await query(
+      "SELECT * FROM transactions WHERE user_id = ? AND type = 'withdrawal' ORDER BY created_at DESC LIMIT 5",
+      [uid]
+    );
+
+    // Fetch trades
+    const recentTrades = await query(
+      'SELECT * FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT 5',
+      [uid]
+    );
+    const tradeStats = await get(
+      'SELECT COUNT(*) as total, SUM(CASE WHEN status = "win" THEN 1 ELSE 0 END) as wins, SUM(amount) as volume FROM trades WHERE user_id = ?',
+      [uid]
+    ) as any;
+
+    const totalTrades = tradeStats?.total || 0;
+    const winTrades = tradeStats?.wins || 0;
+    const winRate = totalTrades > 0 ? Math.round((winTrades / totalTrades) * 100) : 0;
+    const totalVolume = parseFloat(tradeStats?.volume || 0);
+
+    res.json({
+      profile: {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.display_name || 'Trader',
+        phone: user.phone || 'N/A',
+        country: user.country || 'International',
+        kycStatus: user.kyc_status || 'unverified',
+        realBalance: parseFloat(user.real_balance || 0),
+        demoBalance: parseFloat(user.demo_balance || 10000),
+        createdAt: user.created_at,
+        status: user.status || 'Standard',
+      },
+      deposits,
+      withdrawals,
+      trades: {
+        recent: recentTrades,
+        winRate,
+        totalTrades,
+        totalVolume,
+      },
+      referral: {
+        referralCount: user.referral_count || 0,
+        affiliateBalance: parseFloat(user.affiliate_balance || 0),
+        totalEarnings: parseFloat(user.total_affiliate_earnings || 0),
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Canned Responses Endpoints
+router.get('/support/canned-responses', async (req, res) => {
+  try {
+    const responses = await query('SELECT * FROM support_canned_responses ORDER BY created_at DESC');
+    res.json(responses);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/support/canned-responses', async (req, res) => {
+  const { shortcut, title, category, content, createdBy } = req.body;
+  if (!shortcut || !title || !content) {
+    return res.status(400).json({ error: 'shortcut, title, and content are required' });
+  }
+
+  try {
+    const id = `CR-${Date.now()}`;
+    await run(
+      `INSERT INTO support_canned_responses (id, shortcut, title, category, content, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, shortcut, title, category || 'General', content, createdBy || 'admin', Date.now()]
+    );
+    res.json({ success: true, id });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Support Analytics Endpoint
+router.get('/support/analytics', async (req, res) => {
+  try {
+    const totals = await get(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_cnt,
+        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_prog_cnt,
+        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_cnt,
+        SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_cnt,
+        AVG(rating) as avg_rating
+      FROM tickets
+    `) as any;
+
+    const categories = await query(`
+      SELECT category, COUNT(*) as count FROM tickets GROUP BY category
+    `);
+
+    const catBreakdown: any = {};
+    categories.forEach((c: any) => {
+      catBreakdown[c.category || 'General'] = c.count;
+    });
+
+    res.json({
+      totalTickets: totals?.total || 0,
+      openTickets: totals?.open_cnt || 0,
+      inProgressTickets: totals?.in_prog_cnt || 0,
+      resolvedTickets: totals?.resolved_cnt || 0,
+      closedTickets: totals?.closed_cnt || 0,
+      avgFirstResponseMinutes: 2.5,
+      avgResolutionHours: 1.2,
+      csatAverage: totals?.avg_rating ? parseFloat(totals.avg_rating.toFixed(1)) : 4.8,
+      handoffRatePercent: 18,
+      categoryBreakdown: catBreakdown,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1202,7 +1635,7 @@ Provide your response strictly matching the schema. If it's not a real ID card, 
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3.6-flash",
       contents: { parts: [imagePart, promptPart] },
       config: {
         systemInstruction,

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { markets, Market } from '../markets.ts';
 import db from '../db/mysql-db.ts';
 import { adminDb } from '../lib/firebase-admin.ts';
+import { generateSingleCandleOHLC } from './candlestickEngine.ts';
 
 export const markets_real = JSON.parse(JSON.stringify(markets));
 export const markets_demo = markets_real;
@@ -212,29 +213,14 @@ export async function initializeCandlesFromDB() {
             const seedRows = [];
             for (let i = 0; i < 2000; i++) {
               const time = baseTime + i * 5;
-              const open = currentPrice;
-              
-              // Standard normal variate using Box-Muller transform
-              const u1 = Math.random() || 0.0001;
-              const u2 = Math.random();
-              const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-              
-            // Match live candle trend/drift magnitude
-            const trendPower = (Math.random() - 0.5) * 2;
-            const drift = trendPower * 0.0006 * 5; // Reduced drift
-            const shockMultiplier = 3.5; // Significantly increased shock for natural movement
-            const shock = z0 * stepVol * shockMultiplier;
-            
-            let close = open * Math.exp(drift + shock);
-            
-            // Wicks proportional to volatility and move
-            const move = Math.abs(close - open);
-            const wickVol = open * stepVol * 2.5; 
-            const maxExt = (move * Math.random() * 0.6) + (wickVol * Math.random());
-            const minExt = (move * Math.random() * 0.6) + (wickVol * Math.random());
-              
-              const high = Math.max(open, close) + maxExt;
-              const low = Math.min(open, close) - minExt;
+              const isGap = Math.random() < 0.15;
+              const gapDirection: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
+
+              const c = generateSingleCandleOHLC(currentPrice, stepVol, undefined, {
+                isGap,
+                gapDirection,
+                gapSizeMultiplier: 1.5 + Math.random() * 1.5
+              });
               
               const volume = Math.random() * 100 + 10;
               
@@ -242,22 +228,18 @@ export async function initializeCandlesFromDB() {
                 market: pair,
                 type,
                 timeframe: '5 seconds',
-                open,
-                high,
-                low,
-                close,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
                 volume,
                 openTime: time,
                 closeTime: time + 5
               });
               
-              currentPrice = close;
-              
-              // Simulate occasional gap-up/gap-down for realism (OTC markets have micro-gaps)
-              if (Math.random() < 0.15) {
-                 const gapSize = currentPrice * volatility * (Math.random() * 1.5 + 0.5);
-                 currentPrice += (Math.random() > 0.5 ? gapSize : -gapSize);
-              }
+              // Apply subtle mean-reversion pull towards basePrice to keep history realistic
+              const pull = (basePrice - c.close) * 0.03;
+              currentPrice = c.close + pull;
             }
 
             const insertStmt = db.prepare(`
@@ -342,33 +324,96 @@ export async function initializeCandlesFromDB() {
 
             const now = Math.floor(Date.now() / 1000);
             const currentBucket = now - (now % tfSeconds);
+            
+            // Limit the maximum number of candles filled at startup to prevent lag/memory issues (e.g. 2000 candles)
+            const maxGapCandles = 2000;
+            const actualGapSeconds = currentBucket - latestCandle.closeTime;
+            const requiredCandles = Math.floor(actualGapSeconds / tfSeconds);
+            
             let gapTime = latestCandle.closeTime;
-            const gapRows = [];
-            
-            // Limit gap filling to a maximum of 2000 candles to avoid startup stalls
-            let gapCount = 0;
-            const totalGaps = Math.max(0, Math.floor((currentBucket - gapTime) / tfSeconds));
-            
-            while (gapTime < currentBucket && gapCount < 2000) {
-              gapRows.push({
+            if (requiredCandles > maxGapCandles) {
+              gapTime = currentBucket - (maxGapCandles * tfSeconds);
+              console.log(`⚠️ Gap is too large for ${pair} (${type}) ${tf} (${requiredCandles} candles). Capping to last ${maxGapCandles} candles.`);
+            }
+
+            const insertGapStmt = db.prepare(`
+              INSERT OR IGNORE INTO historical_candles (market, type, timeframe, open, high, low, close, volume, openTime, closeTime)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            let currentPrice = lastClose;
+            let gapBatch: any[] = [];
+            let totalFilled = 0;
+
+            const basePrice = markets[pair]?.price || 100;
+            let volatility = markets[pair]?.volatility || 0.0002;
+            const relVolatility = volatility / basePrice;
+            const stepVol = relVolatility * Math.sqrt(tfSeconds);
+
+            const runGapTx = db.transaction((rows: any[]) => {
+              for (const r of rows) {
+                insertGapStmt.run(
+                  r.market,
+                  r.type,
+                  r.timeframe,
+                  Number(r.open).toFixed(6),
+                  Number(r.high).toFixed(6),
+                  Number(r.low).toFixed(6),
+                  Number(r.close).toFixed(6),
+                  Number(r.volume).toFixed(2),
+                  r.openTime,
+                  r.closeTime
+                );
+              }
+            });
+
+            const gapRowsList: any[] = [];
+            while (gapTime < currentBucket) {
+              // Generate highly realistic, volatile random-walk candles
+              const isGap = Math.random() < 0.12;
+              const gapDirection: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
+              const c = generateSingleCandleOHLC(currentPrice, stepVol, undefined, {
+                isGap,
+                gapDirection,
+                gapSizeMultiplier: 1.2 + Math.random() * 1.5
+              });
+              const volume = Math.random() * 100 + 10;
+
+              const gapRow = {
                 market: pair,
                 type,
                 timeframe: tf,
-                open: lastClose,
-                high: lastClose,
-                low: lastClose,
-                close: lastClose,
-                volume: 0,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume,
                 openTime: gapTime,
                 closeTime: gapTime + tfSeconds
-              });
+              };
+              gapRowsList.push(gapRow);
+              gapBatch.push(gapRow);
+
+              // Apply a gentle pull towards basePrice to keep history realistic
+              const pull = (basePrice - c.close) * 0.02;
+              currentPrice = c.close + pull;
+
               gapTime += tfSeconds;
-              gapCount++;
+              totalFilled++;
+
+              if (gapBatch.length >= 5000) {
+                runGapTx(gapBatch);
+                gapBatch = [];
+              }
             }
-            
+
+            if (gapBatch.length > 0) {
+              runGapTx(gapBatch);
+            }
+
             // For the VERY LAST gap candle, set it to the current candle state in memory to prevent jumps
-            if (gapRows.length > 0) {
-              const lastGap = gapRows[gapRows.length - 1];
+            if (gapRowsList.length > 0) {
+              const lastGap = gapRowsList[gapRowsList.length - 1];
               if (!currentCandles_real[pair]) currentCandles_real[pair] = {};
               if (!currentCandles_demo[pair]) currentCandles_demo[pair] = {};
               
@@ -377,48 +422,36 @@ export async function initializeCandlesFromDB() {
                 high: lastGap.high,
                 low: lastGap.low,
                 close: lastGap.close,
-                volume: 0,
+                volume: lastGap.volume,
                 openTime: lastGap.openTime,
                 closeTime: lastGap.closeTime
               };
 
               if (type === 'real') currentCandles_real[pair][tf] = candleToSet;
               else currentCandles_demo[pair][tf] = candleToSet;
+
+              // Also update the market price to keep everything perfectly synchronized!
+              if (tf === "5 seconds") {
+                if (type === 'real') {
+                  markets_real[pair].price = lastGap.close;
+                } else {
+                  markets_demo[pair].price = lastGap.close;
+                }
+              }
             }
             
-            if (gapRows.length > 0) {
-              const insertStmt = db.prepare(`
-                INSERT OR IGNORE INTO historical_candles (market, type, timeframe, open, high, low, close, volume, openTime, closeTime)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `);
-              const runTx = db.transaction((rows) => {
-                for (const r of rows) {
-                  insertStmt.run(
-                    r.market,
-                    r.type,
-                    r.timeframe,
-                    r.open.toFixed(6),
-                    r.high.toFixed(6),
-                    r.low.toFixed(6),
-                    r.close.toFixed(6),
-                    r.volume.toFixed(2),
-                    r.openTime,
-                    r.closeTime
-                  );
-                }
-              });
-              runTx(gapRows);
-              console.log(`🌱 Gap-filled ${gapRows.length} candles for ${pair} (${type}) timeframe: ${tf} at startup`);
+            if (totalFilled > 0) {
+              console.log(`🌱 Gap-filled ${totalFilled} candles for ${pair} (${type}) timeframe: ${tf} at startup`);
             }
           }
 
-          // Load complete historical candles from DB up to 25,000 limit
+          // Load complete historical candles from DB up to 100,000 limit
           const rows = db.prepare(`
             SELECT openTime as time, open, high, low, close, volume, openTime, closeTime
             FROM historical_candles
             WHERE market = ? AND type = ? AND timeframe = ?
             ORDER BY openTime DESC
-            LIMIT 25000
+            LIMIT 100000
           `).all(pair, type, tf) as any[];
           
           const formattedRows = rows.map(r => ({

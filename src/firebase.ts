@@ -54,6 +54,23 @@ export const auth = {
   }
 } as any;
 
+async function safeJsonResponse(res: Response) {
+  try {
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      return await res.json();
+    }
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: `Server returned non-JSON response (${res.status})` };
+    }
+  } catch (err: any) {
+    return { error: err.message || 'JSON parse error' };
+  }
+}
+
 export const db = {
   collection: (name: string) => ({
     _name: name,
@@ -61,48 +78,60 @@ export const db = {
       _name: name,
       id: id,
       get: async () => {
-        const token = getAuthToken();
-        const res = await fetch(`/api/${name === 'users' ? 'user/profile' : name + '/' + id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        return { exists: () => !!data && !data.error, data: () => data, id };
+        try {
+          const token = getAuthToken();
+          const res = await fetch(`/api/${name === 'users' ? 'user/profile' : name + '/' + id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          const data = await safeJsonResponse(res);
+          return { exists: () => !!data && !data.error, data: () => data, id };
+        } catch {
+          return { exists: () => false, data: () => null, id };
+        }
       },
       update: async (data: any) => {
-        const token = getAuthToken();
-        const res = await fetch(`/api/${name}/${id}`, {
-          method: 'PATCH',
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(data)
-        });
-        return await res.json();
+        try {
+          const token = getAuthToken();
+          const res = await fetch(`/api/${name}/${id}`, {
+            method: 'PATCH',
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+          });
+          return await safeJsonResponse(res);
+        } catch (e: any) {
+          return { error: e.message };
+        }
       }
     }),
     get: async () => {
-      const token = getAuthToken();
-      const user = JSON.parse(localStorage.getItem('bivax_user') || '{}');
-      const isAdmin = !!user.is_admin;
-      
-      let endpoint = `/api/${name}`;
-      if (isAdmin && (name === 'users' || name === 'trades' || name === 'transactions')) {
-        endpoint = `/api/admin/${name}`;
-      }
+      try {
+        const token = getAuthToken();
+        const user = JSON.parse(localStorage.getItem('bivax_user') || '{}');
+        const isAdmin = !!user.is_admin;
+        
+        let endpoint = `/api/${name}`;
+        if (isAdmin && (name === 'users' || name === 'trades' || name === 'transactions')) {
+          endpoint = `/api/admin/${name}`;
+        }
 
-      const res = await fetch(endpoint, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      return {
-        docs: (Array.isArray(data) ? data : []).map((d: any) => ({
-          id: d.id || d.uid,
-          data: () => d,
-          exists: () => true
-        })),
-        empty: (Array.isArray(data) ? data : []).length === 0
-      };
+        const res = await fetch(endpoint, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await safeJsonResponse(res);
+        return {
+          docs: (Array.isArray(data) ? data : []).map((d: any) => ({
+            id: d.id || d.uid,
+            data: () => d,
+            exists: () => true
+          })),
+          empty: !(Array.isArray(data) && data.length > 0)
+        };
+      } catch {
+        return { docs: [], empty: true };
+      }
     }
   })
 } as any;
@@ -113,7 +142,7 @@ export async function signInWithEmailAndPassword(a: any, email: string, pass: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password: pass })
   });
-  const data = await res.json();
+  const data = await safeJsonResponse(res);
   if (data.error) throw new Error(data.error);
   saveAuth(data.token, data.user);
   return { user: data.user };
@@ -125,7 +154,7 @@ export async function createUserWithEmailAndPassword(a: any, email: string, pass
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password: pass })
   });
-  const data = await res.json();
+  const data = await safeJsonResponse(res);
   if (data.error) throw new Error(data.error);
   saveAuth(data.token, data.user);
   return { user: data.user };
@@ -133,7 +162,9 @@ export async function createUserWithEmailAndPassword(a: any, email: string, pass
 
 export const signInWithPopup = async (a: any, p: any) => {
   const res = await fetch('/api/auth/google/url');
-  const { url } = await res.json();
+  const data = await safeJsonResponse(res);
+  const url = data.url;
+  if (!url) throw new Error(data.error || 'Failed to get OAuth URL');
   
   return new Promise((resolve, reject) => {
     const width = 500, height = 600;
@@ -169,18 +200,86 @@ export const sendEmailVerification = async (...args: any[]) => {};
 export const GoogleAuthProvider = class {};
 export const EmailAuthProvider = { credential: (...args: any[]) => ({}) };
 export const sendPasswordResetEmail = async (...args: any[]) => {};
-export const collection = (dbObj: any, ...path: string[]) => dbObj.collection(path.join('/'));
-export const doc = (dbObj: any, ...path: string[]) => dbObj.collection(path.slice(0, -1).join('/')).doc(path[path.length - 1]);
-export const getDoc = (ref: any) => ref.get();
-export const getDocs = (queryRef: any) => queryRef.get();
-export const setDoc = (ref: any, data: any, ...args: any[]) => ref.update(data);
-export const updateDoc = (ref: any, data: any, ...args: any[]) => ref.update(data);
+export const collection = (dbObj: any, ...path: string[]) => {
+  let basePath = '';
+  if (dbObj) {
+    if (typeof dbObj._name === 'string') {
+      basePath = dbObj._name;
+      if (dbObj.id) {
+        basePath += '/' + dbObj.id;
+      }
+    } else if (typeof dbObj.path === 'string') {
+      basePath = dbObj.path;
+    }
+  }
+
+  const fullPathParts: string[] = [];
+  if (basePath) {
+    fullPathParts.push(...basePath.split('/').filter(Boolean));
+  }
+  for (const p of path) {
+    if (typeof p === 'string') {
+      fullPathParts.push(...p.split('/').filter(Boolean));
+    }
+  }
+
+  const fullPath = fullPathParts.join('/');
+  if (dbObj && typeof dbObj.collection === 'function' && !basePath) {
+    return dbObj.collection(fullPath);
+  }
+  return db.collection(fullPath);
+};
+
+export const doc = (dbObj: any, ...path: string[]) => {
+  let basePath = '';
+  if (dbObj) {
+    if (typeof dbObj._name === 'string') {
+      basePath = dbObj._name;
+      if (dbObj.id) {
+        basePath += '/' + dbObj.id;
+      }
+    } else if (typeof dbObj.path === 'string') {
+      basePath = dbObj.path;
+    }
+  }
+
+  const allParts: string[] = [];
+  if (basePath) {
+    allParts.push(...basePath.split('/').filter(Boolean));
+  }
+  for (const p of path) {
+    if (typeof p === 'string') {
+      allParts.push(...p.split('/').filter(Boolean));
+    }
+  }
+
+  if (allParts.length === 0) {
+    const randomId = Math.random().toString(36).substring(2, 15);
+    return db.collection('default').doc(randomId);
+  }
+
+  if (allParts.length % 2 === 1) {
+    const colPath = allParts.join('/');
+    const randomId = Math.random().toString(36).substring(2, 15);
+    return db.collection(colPath).doc(randomId);
+  } else {
+    const docId = allParts.pop()!;
+    const colPath = allParts.join('/');
+    return db.collection(colPath).doc(docId);
+  }
+};
+
+export const getDoc = (ref: any) => ref && typeof ref.get === 'function' ? ref.get() : Promise.resolve({ exists: () => false, data: () => ({}) });
+export const getDocs = (queryRef: any) => queryRef && typeof queryRef.get === 'function' ? queryRef.get() : Promise.resolve({ docs: [], empty: true });
+export const setDoc = (ref: any, data: any, ...args: any[]) => ref && typeof ref.update === 'function' ? ref.update(data) : Promise.resolve();
+export const updateDoc = (ref: any, data: any, ...args: any[]) => ref && typeof ref.update === 'function' ? ref.update(data) : Promise.resolve();
 export const addDoc = async (colRef: any, data: any) => {
-  const name = colRef._name;
+  const name = colRef?._name || '';
   const token = getAuthToken();
   
   let endpoint = `/api/${name}`;
   let method = 'POST';
+  let bodyData: any = data;
 
   if (name === 'deposits' || name === 'transactions') {
     endpoint = '/api/wallet/deposit';
@@ -188,6 +287,16 @@ export const addDoc = async (colRef: any, data: any) => {
     endpoint = '/api/wallet/withdraw';
   } else if (name === 'trades') {
     endpoint = '/api/trades/place';
+  } else if (name === 'tickets') {
+    endpoint = '/api/tickets';
+    const ticketId = data.ticketId || colRef.id || ('t_' + Math.random().toString(36).substring(2, 11));
+    bodyData = { ticketId, ticketData: data };
+  } else if (name && name.startsWith('tickets/') && name.endsWith('/messages')) {
+    endpoint = '/api/tickets/messages';
+    const parts = name.split('/');
+    const ticketId = parts[1];
+    const messageId = data.messageId || ('m_' + Math.random().toString(36).substring(2, 11));
+    bodyData = { ticketId, messageId, messageData: data };
   }
 
   try {
@@ -199,7 +308,7 @@ export const addDoc = async (colRef: any, data: any) => {
     const res = await fetch(endpoint, {
       method,
       headers,
-      body: JSON.stringify(data)
+      body: JSON.stringify(bodyData)
     });
     
     if (!res.ok) {
@@ -211,7 +320,7 @@ export const addDoc = async (colRef: any, data: any) => {
     }
     
     const result = await res.json();
-    return { id: result.id || 'new-id' };
+    return { id: result.id || bodyData.ticketId || bodyData.messageId || 'new-id' };
   } catch (err) {
     console.error(`Proxy addDoc error for ${name}:`, err);
     throw err;

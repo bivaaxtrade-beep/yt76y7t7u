@@ -3,14 +3,8 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Menu, ArrowRight, Award, Trophy, Landmark, TrendingUp, ShieldCheck, Star, Calculator, Calendar, Smartphone, MessageCircle, BookOpen, UserPlus, FileText, Activity, Zap, Globe, Shield, Headphones, PieChart, Check, Users, HelpCircle, ChevronDown } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { AuthModal } from '../components/AuthModal';
-import { PriceTicker } from '../components/PriceTicker';
-import { MarketStatusCard } from '../components/MarketStatusCard';
-import { MarketMovers } from '../components/MarketMovers';
 import NewsletterForm from '../components/NewsletterForm';
-import TestimonialsCarousel from '../components/TestimonialsCarousel';
 import SEO from '../components/SEO';
-import CopyTradingHighlights from '../components/CopyTradingHighlights';
-import MarketTicker from '../components/MarketTicker';
 
 export default function Homepage() {
   const navigate = useNavigate();
@@ -204,21 +198,9 @@ export default function Homepage() {
             </div>
           </div>
 
-          <div className="mt-12">
-            <PriceTicker />
-            <div className="mt-4">
-              <MarketTicker />
-            </div>
-          </div>
+          {/* Removed Market Tickers per user request */}
 
-          <div className="mt-12 flex flex-col lg:flex-row gap-8 items-start">
-            <div className="flex-1 w-full">
-              <MarketStatusCard />
-            </div>
-            <div className="lg:w-[400px] w-full shrink-0">
-              <MarketMovers />
-            </div>
-          </div>
+          {/* Removed Market Status and Market Movers section per user request */}
 
           {/* Payment & Security Partners */}
           <div className="mt-14 pt-8 border-t border-white/5 flex flex-col items-center">
@@ -301,8 +283,7 @@ export default function Homepage() {
         </div>
       </section>
 
-      {/* Copy Trading Highlights Section */}
-      <CopyTradingHighlights />
+          {/* Removed Copy Trading Highlights per user request */}
 
       {/* Why Choose Bivaax Section */}
       <section className="px-4 py-24 border-t border-white/5">
@@ -701,7 +682,6 @@ export default function Homepage() {
         </div>
       </section>
 
-      <TestimonialsCarousel />
 
       {/* Footer */}
       <footer className="border-t border-white/5 bg-[#17181d]">
@@ -717,10 +697,55 @@ export default function Homepage() {
                   <NewsletterForm />
                 </div>
                 <div className="mt-8 flex gap-4">
-                  {['youtube', 'instagram', 'telegram', 'facebook', 'tiktok'].map((social, i) => (
-                    <div key={`social-${social}`} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 cursor-pointer text-white transition-colors">
-                      <div className="w-3 h-3 bg-white rounded-sm opacity-50"></div>
-                    </div>
+                  {[
+                    {
+                      name: 'youtube',
+                      icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M2.5 7.1c-.2.7-.3 1.5-.3 2.5v4.8c0 1 .1 1.8.3 2.5.3 1.1 1.1 1.9 2.2 2.2.7.2 1.5.3 2.5.3h9.6c1 0 1.8-.1 2.5-.3 1.1-.3 1.9-1.1 2.2-2.2.2-.7.3-1.5.3-2.5V9.6c0-1-.1-1.8-.3-2.5-.3-1.1-1.1-1.9-2.2-2.2-.7-.2-1.5-.3-2.5-.3H7.2c-1 0-1.8.1-2.5.3-1.1.3-1.9 1.1-2.2 2.2z"></path>
+                          <path d="M10 15l5-3-5-3v6z"></path>
+                        </svg>
+                      )
+                    },
+                    {
+                      name: 'instagram',
+                      icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                          <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                          <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                        </svg>
+                      )
+                    },
+                    {
+                      name: 'telegram',
+                      icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21.5 2L2 10.5 7.5 13l2.5 7 2.5-4.5 5 4.5 2-18z"></path>
+                          <path d="M7.5 13l7.5-6.5-6 7.5"></path>
+                        </svg>
+                      )
+                    },
+                    {
+                      name: 'facebook',
+                      icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path>
+                        </svg>
+                      )
+                    },
+                    {
+                      name: 'tiktok',
+                      icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"></path>
+                        </svg>
+                      )
+                    }
+                  ].map((social) => (
+                    <a key={`social-${social.name}`} href={`https://${social.name}.com`} target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 hover:text-[#ffcf00] cursor-pointer text-white/70 transition-colors">
+                      {social.icon}
+                    </a>
                   ))}
                 </div>
               </div>

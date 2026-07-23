@@ -1,3 +1,4 @@
+import { SupportChatWidget } from "../components/SupportChatWidget";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -92,6 +93,7 @@ import {
   Youtube,
   Instagram,
   Send,
+  Paperclip,
   Facebook,
   MessageSquare,
   Music2,
@@ -99,7 +101,7 @@ import {
   Search,
   CandlestickChart,
   Signal,
-  Paperclip,
+  
   Cloud,
   BarChart2,
   BarChart3,
@@ -337,32 +339,27 @@ const resampleData = (data: any[], tfString: string) => {
         const high = Number(d.high || d.open || 0);
         const low = Number(d.low || d.open || 0);
         const close = Number(d.close || d.open || 0);
+        const volume = Number(d.volume || 1);
 
         if (!currentCandle || currentBucket !== bucketTime) {
             if (currentCandle) {
                 resampled.push(currentCandle);
-                previousClose = currentCandle.close;
             }
             currentBucket = bucketTime;
             
-            // Strictly enforce continuity: the new open must match the previous close
-            const continuousOpen = previousClose !== null ? previousClose : open;
-            
-            // Apply random volatility to high/low to make candles look more erratic and professional
-            const volatility = (Math.random() - 0.5) * (Math.random() * 0.001);
             currentCandle = {
                 time: bucketTime as Time,
-                open: continuousOpen,
-                high: Math.max(continuousOpen, high) * (1 + Math.abs(volatility)),
-                low: Math.min(continuousOpen, low) * (1 - Math.abs(volatility)),
+                open: open,
+                high: Math.max(open, close, high),
+                low: Math.min(open, close, low),
                 close: close,
+                volume: volume
             };
         } else {
-            // Apply random volatility to high/low to make candles look more erratic and professional
-            const volatility = (Math.random() - 0.5) * (Math.random() * 0.001); 
-            currentCandle.high = Math.max(currentCandle.high, high) * (1 + Math.abs(volatility));
-            currentCandle.low = Math.min(currentCandle.low, low) * (1 - Math.abs(volatility));
+            currentCandle.high = Math.max(currentCandle.high, high, close);
+            currentCandle.low = Math.min(currentCandle.low, low, close);
             currentCandle.close = close;
+            currentCandle.volume = (currentCandle.volume || 0) + volume;
         }
     }
     if (currentCandle) resampled.push(currentCandle);
@@ -376,9 +373,19 @@ const resampleData = (data: any[], tfString: string) => {
           const stepSize = (d.close - currentOpen) / splits;
           
           for (let j = 0; j < splits; j++) {
-             const currentClose = currentOpen + stepSize;
-             const high = Math.max(currentOpen, currentClose) + Math.abs(currentClose - currentOpen) * 0.1;
-             const low = Math.min(currentOpen, currentClose) - Math.abs(currentClose - currentOpen) * 0.1;
+             const subProgress = (j + 1) / splits;
+             const isLastSub = j === splits - 1;
+             
+             // Add random noise while preserving macro drift
+             const subNoise = (Math.random() - 0.5) * Math.abs(stepSize) * 0.7;
+             const rawSubClose = currentOpen + stepSize + subNoise;
+             const currentClose = isLastSub ? d.close : rawSubClose;
+             
+             const bodyRange = Math.abs(currentClose - currentOpen);
+             const wickNoise = Math.max(bodyRange * 0.4, Math.abs(stepSize) * 0.5, currentOpen * 0.00008);
+             
+             const high = Math.max(currentOpen, currentClose) + Math.random() * wickNoise;
+             const low = Math.min(currentOpen, currentClose) - Math.random() * wickNoise;
              
              resampled.push({
                  time: (d.time + (j * timeframeSeconds)) as Time,
@@ -1095,6 +1102,8 @@ export default function TradeTerminal() {
   const [ticketMessage, setTicketMessage] = useState("");
   const [isCreatingTicket, setIsCreatingTicket] = useState(false);
   const [ticketReply, setTicketReply] = useState("");
+  const [ticketAttachedFiles, setTicketAttachedFiles] = useState<string[]>([]);
+  const ticketFileInputRef = useRef<HTMLInputElement>(null);
   const [isBotTyping, setIsBotTyping] = useState(false);
   const [showStory, setShowStory] = useState(false);
   const [selectedStoryIndex, setSelectedStoryIndex] = useState<number>(0);
@@ -1286,9 +1295,9 @@ export default function TradeTerminal() {
 
         if (!user) {
             setIsAdmin(false);
-            setActiveTrades([]);
-            setUserTrades([]);
-            setUserTickets([]);
+            setActiveTrades(prev => prev.length === 0 ? prev : []);
+            setUserTrades(prev => prev.length === 0 ? prev : []);
+            setUserTickets(prev => prev.length === 0 ? prev : []);
             return;
         }
 
@@ -1401,103 +1410,65 @@ export default function TradeTerminal() {
         });
         unsubs.push(unsubUser);
 
-        // Trades
-        // Initial CLOSED trades once
-            const qOpenTrades = query(
-              collection(db, 'trades'), 
-              where('userId', '==', user.uid),
-              where('status', '==', 'open'),
-            );
-            
-            const handleIncomingOpenTrades = (snapDocs: any[]) => {
-                const open = snapDocs.map(d => ({ id: d.id, ...d.data() }));
-                
-                // Update activeTrades for chart/timer
-                setActiveTrades(prev => {
-                    const updated = open.map((t: any) => {
-                        const existing = prev.find(p => p.id === t.id);
-                        const rawExp = t.expirationTime;
-                        const parsedExp = typeof rawExp === 'number' ? rawExp : (rawExp && typeof rawExp.toDate === 'function' ? rawExp.toDate().getTime() : Date.now());
-                        const computedTime = Math.floor((parsedExp - Date.now()) / 1000);
+        // Trades - Use REST as primary since we use SQLite
+        const fetchTrades = async (retries = 3) => {
+            if (!user?.uid) return;
+            try {
+                const res = await fetch(`/api/user-trades?userId=${user.uid}`);
+                if (res.ok) {
+                    const resJson = await res.json();
+                    if (resJson.success && resJson.trades) {
+                        const trades = resJson.trades;
+                        const open = trades.filter((t: any) => t.status === 'open');
+                        const closed = trades.filter((t: any) => t.status !== 'open');
                         
-                        if (existing) {
-                            return { ...existing, ...t, timeLeft: Math.max(0, computedTime) };
-                        }
-                        return { ...t, timeLeft: Math.max(0, computedTime) };
-                    });
-                    
-                    const localOnly = prev.filter(p => {
-                        const isExpired = p.timeLeft <= 0 || (p.expirationTime && Date.now() >= p.expirationTime);
-                        const isSettled = (p.status && p.status !== 'open') || (processedTradesRef.current && processedTradesRef.current.has(p.id));
-                        return !open.some(o => o.id === p.id) && 
-                               !isExpired && 
-                               !isSettled && 
-                               (Date.now() - (p.createdAt || 0) < 8000);
-                    });
-                    
-                    const final = [...updated, ...localOnly];
-                    final.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                    return final;
-                });
-
-                // Update userTrades for history UI
-                setUserTrades(prev => {
-                    const closed = prev.filter(t => t.status !== 'open');
-                    const combined = [...open, ...closed];
-                    combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                    return combined.slice(0, 100);
-                });
-            };
-
-            const unsubOpenTrades = onSnapshot(qOpenTrades, (snapshot) => {
-                handleIncomingOpenTrades(snapshot.docs);
-            }, async (err) => {
-                console.warn("Open trades client sync failed, falling back to server-side REST fetch:", err.message);
-                try {
-                    if (!user || !user.uid) return;
-                    const res = await fetch(`/api/user-trades?userId=${user.uid}`);
-                    if (res.ok) {
-                        const resJson = await res.json();
-                        if (resJson.success && resJson.trades) {
-                            const open = resJson.trades.filter((t: any) => t.status === 'open');
-                            setActiveTrades(open);
-                        }
+                        setActiveTrades(open.map((t: any) => {
+                            const exp = t.expiryTime ? (t.expiryTime * 1000) : (t.expirationTime || Date.now());
+                            return { ...t, timeLeft: Math.max(0, Math.floor((exp - Date.now()) / 1000)) };
+                        }));
+                        setUserTrades(closed);
                     }
-                } catch (err) {
-                    console.error("Open trades REST fetch failed:", err);
+                } else if (retries > 0) {
+                    setTimeout(() => fetchTrades(retries - 1), 1500);
                 }
+            } catch (err) {
+                console.error("Trades initial fetch failed:", err);
+                if (retries > 0) {
+                    setTimeout(() => fetchTrades(retries - 1), 2000);
+                }
+            }
+        };
+        fetchTrades();
+
+        // Optional: Keep Firestore for real-time legacy sync if needed, but don't let it overwrite REST
+        const unsubOpenTrades = onSnapshot(query(collection(db, 'trades'), where('userId', '==', user.uid), where('status', '==', 'open')), (snapshot) => {
+            if (snapshot.empty) return; // Don't wipe REST data if Firestore is empty
+            const open = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setActiveTrades(prev => {
+                const updated = open.map((t: any) => {
+                    const existing = prev.find(p => p.id === t.id);
+                    const rawExp = t.expirationTime;
+                    const parsedExp = typeof rawExp === 'number' ? rawExp : (rawExp && typeof rawExp.toDate === 'function' ? rawExp.toDate().getTime() : Date.now());
+                    const computedTime = Math.floor((parsedExp - Date.now()) / 1000);
+                    if (existing) return { ...existing, ...t, timeLeft: Math.max(0, computedTime) };
+                    return { ...t, timeLeft: Math.max(0, computedTime) };
+                });
+                const localOnly = prev.filter(p => !open.some(o => o.id === p.id) && p.timeLeft > 0 && (Date.now() - (p.createdAt || 0) < 10000));
+                return [...updated, ...localOnly].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             });
-            unsubs.push(unsubOpenTrades);
+        });
+        unsubs.push(unsubOpenTrades);
             
-            // Fetch closed trades once
+            // Fetch closed trades once (legacy sync, REST handles primary now)
             getDocs(query(collection(db, 'trades'), where('userId', '==', user.uid), where('status', '!=', 'open'), limit(50))).then(snap => {
+                if (snap.empty) return;
                 const closed = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 setUserTrades(prev => {
-                  const open = prev.filter(t => t.status === 'open');
-                  const combined = [...open, ...closed];
-                  combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                  return combined.slice(0, 100);
+                  const combined = [...prev.filter(t => t.status === 'open'), ...closed];
+                  return combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 100);
                 });
             }).catch(async (err) => {
-                console.warn("Closed trades fetch issue, falling back to server-side REST fetch:", err.message);
-                try {
-                    if (!user || !user.uid) return;
-                    const res = await fetch(`/api/user-trades?userId=${user.uid}`);
-                    if (res.ok) {
-                        const resJson = await res.json();
-                        if (resJson.success && resJson.trades) {
-                            const closed = resJson.trades.filter((t: any) => t.status !== 'open');
-                            setUserTrades(prev => {
-                                const open = prev.filter(t => t.status === 'open');
-                                const combined = [...open, ...closed];
-                                combined.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                                return combined.slice(0, 100);
-                            });
-                        }
-                    }
-                } catch (err) {
-                    console.error("Closed trades REST fetch failed:", err);
-                }
+                // REST already called on mount, no need to retry here unless desired
             });
 
             // Tickets - convert to getDocs to save quota. Individual ticket messages still use onSnapshot.
@@ -1558,7 +1529,7 @@ export default function TradeTerminal() {
 
   useEffect(() => {
     if (!selectedTicket || !auth.currentUser) {
-      setTicketMessages([]);
+      setTicketMessages(prev => prev.length === 0 ? prev : []);
       return;
     }
     
@@ -1896,7 +1867,7 @@ export default function TradeTerminal() {
 
   useEffect(() => {
     if (!currentUser?.uid || tournamentsData.length === 0) {
-      setUserRegistrations([]);
+      setUserRegistrations(prev => prev.length === 0 ? prev : []);
       return;
     }
     
@@ -1910,7 +1881,12 @@ export default function TradeTerminal() {
 
         const results = await Promise.all(fetchPromises);
         const registeredIds = results.filter(id => id !== null) as string[];
-        setUserRegistrations(registeredIds);
+        setUserRegistrations(prev => {
+          if (prev.length === registeredIds.length && prev.every((id, idx) => id === registeredIds[idx])) {
+            return prev;
+          }
+          return registeredIds;
+        });
       } catch (err) {
         console.warn("Participant fetch error:", err);
       }
@@ -2053,7 +2029,7 @@ const PROMOTED_ARTICLES = [
        }
     };
     fetchLocation();
-  }, [currentUser]);
+  }, [currentUser?.uid]);
 
   const [notifications, setNotifications] = useState({ promo: true, info: true });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -3633,7 +3609,7 @@ const PROMOTED_ARTICLES = [
       const newPayout = markets[activeAsset].payout || 82;
       setCalcPayout(prev => prev !== newPayout ? newPayout : prev);
     }
-  }, [activeAsset, markets]);
+  }, [activeAsset, markets?.[activeAsset]?.payout]);
 
   // Global Static Data Effect - Removed in favor of aggregate boot API
 
@@ -3701,7 +3677,7 @@ const PROMOTED_ARTICLES = [
   }, [currentUser?.uid]);
 
   useEffect(() => {
-    if (!currentUser?.uid || !selectedTournament) return;
+    if (!currentUser?.uid || !selectedTournament?.id) return;
 
     const tid = selectedTournament.id;
     const q = query(
@@ -3714,7 +3690,7 @@ const PROMOTED_ARTICLES = [
         const parts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setTournamentParticipants(parts);
     }).catch(err => console.warn("Tournament participants fetch failed:", err.message));
-  }, [currentUser?.uid, selectedTournament]);
+  }, [currentUser?.uid, selectedTournament?.id]);
 
   const handleRegisterTournament = async (tournament: any) => {
     if (!auth.currentUser) return;
@@ -3850,8 +3826,23 @@ const PROMOTED_ARTICLES = [
     }
   };
 
+  const handleTicketFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('File size must be less than 5MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setTicketAttachedFiles((prev) => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const sendTicketMessage = async () => {
-    if (!selectedTicket || !ticketReply.trim() || !currentUser) return;
+    if (!selectedTicket || (!ticketReply.trim() && ticketAttachedFiles.length === 0) || !currentUser) return;
     const tid = selectedTicket.id;
     try {
       const messageId = doc(collection(db, 'tickets', tid, 'messages')).id;
@@ -3860,6 +3851,7 @@ const PROMOTED_ARTICLES = [
         senderName: currentUser.displayName || currentUser.email?.split('@')[0] || "User",
         senderType: 'user',
         text: ticketReply,
+        attachments: ticketAttachedFiles,
         createdAt: Date.now()
       };
 
@@ -3890,6 +3882,7 @@ const PROMOTED_ARTICLES = [
 
       const msg = ticketReply;
       setTicketReply("");
+      setTicketAttachedFiles([]);
       
       // Trigger AI reply
       getAIReply(tid, msg);
@@ -3989,7 +3982,7 @@ const PROMOTED_ARTICLES = [
     }
   };
 
-  const loadMorePastRef = useRef<() => void>(() => {});
+  const loadMorePastRef = useRef<() => void>((() => {}));
 
   const handleLoadMorePast = () => {
     try {
@@ -4000,105 +3993,22 @@ const PROMOTED_ARTICLES = [
       if (currentHistory.length === 0) return;
       
       const oldestCandle = currentHistory[0];
-      const tfSeconds = getTimeSeconds(timeframeRef.current); // Use current timeframe
+      const oldestTime = oldestCandle.time;
       
-      let baseTime = oldestCandle.time;
-      let currentPrice = oldestCandle.open;
-      
-      // Estimate volatility based on the visible recent history
-      let sumBody = 0;
-      const sampleSize = Math.min(20, currentHistory.length);
-      for(let i = 0; i < sampleSize; i++) {
-         sumBody += Math.abs(currentHistory[i].open - currentHistory[i].close);
-      }
-      let avgBody = sumBody / sampleSize;
-      if (avgBody === 0) avgBody = currentPrice * 0.0001;
-      
-      const stepVol = avgBody; 
-      
-      const generatedCount = 2000;
-      const newCandles = [];
-      
-      for (let i = 0; i < generatedCount; i++) {
-        baseTime -= tfSeconds;
-        const close = currentPrice;
-        
-        // Random walk using estimated stepVol
-        const drift = (Math.random() - 0.5) * 0.0001;
-        const shock = (Math.random() + Math.random() + Math.random() + Math.random() + Math.random() + Math.random() - 3) / 3 * stepVol; // approx normal
-        
-        const open = close * Math.exp(drift - (shock / currentPrice)); 
-        const maxExt = stepVol * Math.abs(Math.random()) * 0.25;
-        const minExt = stepVol * Math.abs(Math.random()) * 0.25;
-        
-        const high = Math.max(open, close) + maxExt;
-        const low = Math.min(open, close) - minExt;
-        const volume = Math.random() * 100 + 10;
-        
-        newCandles.push({
-          time: baseTime,
-          open,
-          high,
-          low,
-          close,
-          volume,
-          openTime: baseTime,
-          closeTime: baseTime + tfSeconds
-        });
-        currentPrice = open;
-      }
-      
-      newCandles.reverse();
-      
-      historyCacheRef.current[activePair] = [...newCandles, ...currentHistory];
-      
-      if (seriesRef.current) {
-         // Re-render chart with new data without changing scroll position
-         const currentZoom = chartRef.current ? chartRef.current.timeScale().getVisibleLogicalRange() : null;
+      if (socketRef.current && socketRef.current.connected) {
+         setIsPastHistoryLoading(true);
+         isGeneratingRef.current = true;
          
-         const pairHist = resampleData(historyCacheRef.current[activePair], timeframeRef.current);
-         const uniqueMap = new Map();
-         
-         const isOHLC = chartTypeRef.current === "Candle" || chartTypeRef.current === "Heikin Ashi" || chartTypeRef.current === "Bar";
-         pairHist.forEach((d: any) => {
-             if (isOHLC) {
-                 if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
-                     uniqueMap.set(d.time, d);
-                 }
-             } else {
-                 if (typeof d.value === 'number' && isFinite(d.value)) {
-                     uniqueMap.set(d.time, d);
-                 } else if (typeof d.close === 'number' && isFinite(d.close)) {
-                     uniqueMap.set(d.time, d);
-                 }
-             }
+         socketRef.current.emit('request_past_candles', {
+           asset: activePair,
+           accountType: accountTypeRef.current,
+           timeframe: timeframeRef.current,
+           beforeTime: oldestTime,
+           limit: 1000
          });
-         
-         const uniqueData = Array.from(uniqueMap.values()).sort((a: any, b: any) => a.time - b.time);
-         
-         const isLine = chartType === "Line" || chartType === "Area";
-         const finalData = isLine 
-            ? uniqueData.map((d: any) => ({ time: d.time, value: d.close }))
-            : uniqueData;
-            
-         seriesRef.current.setData(finalData);
-         
-         if (chartRef.current && currentZoom) {
-             // Offset logical range by the exact number of new candles added
-             const newResampledCount = generatedCount;
-             
-             try {
-               chartRef.current.timeScale().setVisibleLogicalRange({
-                 from: currentZoom.from + newResampledCount,
-                 to: currentZoom.to + newResampledCount
-               });
-             } catch(e) {}
-         }
       }
-      
     } catch (e) {
-      console.warn("Failed to generate history", e);
-    } finally {
+      console.warn("Failed to request past history:", e);
       isGeneratingRef.current = false;
       setIsPastHistoryLoading(false);
     }
@@ -4155,6 +4065,17 @@ const PROMOTED_ARTICLES = [
     const updateLine = () => {
       const chartConfigs = (isMultiChart && !isMobile ? [0, 1] : [0]);
       
+      // Calculate smooth interpolated price once per frame
+      let newInterp = currentInterpolatedPriceRef.current;
+      if (rawLastCandleRef.current && targetPriceRef.current > 0) {
+          const currentInterp = currentInterpolatedPriceRef.current ?? rawLastCandleRef.current.close;
+          const target = targetPriceRef.current;
+          const dt = 0.15;
+          const MathAbs = Math.abs(target - currentInterp);
+          newInterp = MathAbs < 0.000001 ? target : currentInterp + (target - currentInterp) * dt;
+          currentInterpolatedPriceRef.current = newInterp;
+      }
+
       chartConfigs.forEach(idx => {
         const currentChart = idx === 0 ? chartRef.current : chartRef2.current;
         const currentSeries = idx === 0 ? seriesRef.current : seriesRef2.current;
@@ -4162,30 +4083,28 @@ const PROMOTED_ARTICLES = [
         
         if (currentChart && currentContainer) {
            try {
-               // Only update interpolation on the primary chart instance if they are synced, 
-               // or handle each if they are independent. 
-               // For simplicity, we keep the interpolation logic tied to chartRef/seriesRef if idx === 0
-               if (idx === 0 && currentSeries && rawLastCandleRef.current && targetPriceRef.current > 0) {
-                   const currentInterp = currentInterpolatedPriceRef.current ?? rawLastCandleRef.current.close;
-                   const target = targetPriceRef.current;
-                   const dt = 0.15;
-                   let MathAbs = Math.abs(target - currentInterp);
-                   const newInterp = MathAbs < 0.000001 ? target : currentInterp + (target - currentInterp) * dt;
-                   currentInterpolatedPriceRef.current = newInterp;
-
+               // Update interpolation smoothly on the series if it exists and price is valid
+               if (currentSeries && rawLastCandleRef.current && newInterp > 0) {
                    const newCandle = { ...rawLastCandleRef.current };
                    newCandle.close = newInterp;
                    newCandle.high = Math.max(newCandle.high, newInterp);
                    newCandle.low = Math.min(newCandle.low, newInterp);
                    
                    try {
-                       if (chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain") {
-                           currentSeries.update({ time: newCandle.time, value: newInterp });
-                       } else {
+                       const isSecond = idx === 1;
+                       if (isSecond) {
                            currentSeries.update(newCandle);
+                       } else {
+                           if (chartTypeRef.current === "Line" || chartTypeRef.current === "Mountain") {
+                               currentSeries.update({ time: newCandle.time, value: newInterp });
+                           } else {
+                               currentSeries.update(newCandle);
+                           }
                        }
                    } catch(updErr) {}
-                   lastCandleRef.current = newCandle;
+                   if (idx === 0) {
+                       lastCandleRef.current = newCandle;
+                   }
                }
 
                const ts = currentChart.timeScale();
@@ -4347,7 +4266,7 @@ const PROMOTED_ARTICLES = [
   }, []);
 
   useEffect(() => {
-    if (currentUser && appConfig?.loginPromoAd_enabled) {
+    if (currentUser?.uid && appConfig?.loginPromoAd_enabled) {
         // Prevent showing on initial load if we don't have a fresh sign-in attempt
         // We use sessionStorage to ensure it pops up once per app session upon login
         const shownKey = `promoAdShown_${currentUser.uid}`;
@@ -4359,7 +4278,7 @@ const PROMOTED_ARTICLES = [
             sessionStorage.setItem(shownKey, 'true');
         }
     }
-  }, [currentUser, appConfig?.loginPromoAd_enabled]);
+  }, [currentUser?.uid, appConfig?.loginPromoAd_enabled]);
 
 
   const [showCopyTrading, setShowCopyTrading] = useState(false);
@@ -4539,7 +4458,7 @@ const PROMOTED_ARTICLES = [
             }).catch((err) => console.error("Error recharging demo balance:", err));
         }
     }
-  }, [demoBalance, accountType, minConvertedAmount, userCurrency, auth.currentUser]);
+  }, [demoBalance, accountType, minConvertedAmount, userCurrency, auth.currentUser?.uid]);
   
   const visibleActiveTrades = activeTrades.filter(t => {
     const isOwner = (t.accountType || 'real') === accountType;
@@ -4574,15 +4493,20 @@ const PROMOTED_ARTICLES = [
   const [leaderboards, setLeaderboards] = useState<any>({ daily: [], weekly: [], monthly: [], allTime: [] });
   
   useEffect(() => {
-    fetch('/api/leaderboard')
-      .then(res => {
+    const loadLeaderboards = async (retries = 3) => {
+      try {
+        const res = await fetch('/api/leaderboard');
         if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then(data => {
+        const data = await res.json();
         if (data) setLeaderboards(data);
-      })
-      .catch(err => console.error('Failed to load leaderboards:', err));
+      } catch (err) {
+        console.error('Failed to load leaderboards:', err);
+        if (retries > 0) {
+            setTimeout(() => loadLeaderboards(retries - 1), 2000);
+        }
+      }
+    };
+    loadLeaderboards();
   }, []);
 
   const dynamicLeaderboard = React.useMemo(() => {
@@ -4850,12 +4774,18 @@ const PROMOTED_ARTICLES = [
                        const isOHLC = chartTypeRef.current === "Candle" || chartTypeRef.current === "Heikin Ashi" || chartTypeRef.current === "Bar";
                        for (const d of initData) {
                            if (isOHLC) {
-                               if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
-                                   uniqueMap.set(d.time, d);
+                               if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close) && Math.abs(d.high) < 1e12 && Math.abs(d.low) < 1e12 && d.open > 0 && d.close > 0) {
+                                   const sanitized = {
+                                       ...d,
+                                       high: Math.max(d.open, d.high, d.low, d.close),
+                                       low: Math.min(d.open, d.high, d.low, d.close)
+                                   };
+                                   uniqueMap.set(d.time, sanitized);
                                }
                            } else {
-                               if (typeof d.value === 'number' && isFinite(d.value)) {
-                                   uniqueMap.set(d.time, d);
+                               const val = typeof d.value === 'number' ? d.value : d.close;
+                               if (typeof val === 'number' && isFinite(val) && Math.abs(val) < 1e12) {
+                                   uniqueMap.set(d.time, { time: d.time, value: val });
                                }
                            }
                        }
@@ -4904,6 +4834,81 @@ const PROMOTED_ARTICLES = [
       } finally {
         setIsLoading(false);
         setHistoryLoaded(Date.now()); // Trigger chart re-render if it missed the update
+      }
+    });
+
+    socket.on('past_candles_response', (res: { asset: string, timeframe: string, candles: any[], error?: string }) => {
+      isGeneratingRef.current = false;
+      setIsPastHistoryLoading(false);
+      
+      if (res.error || !res.candles || res.candles.length === 0) {
+        console.log("No older candles returned from server or error:", res.error);
+        return;
+      }
+
+      const activePair = activeAssetRef.current;
+      if (res.asset !== activePair || res.timeframe !== timeframeRef.current) {
+        // Response is for a different asset/timeframe (user switched while loading)
+        return;
+      }
+
+      try {
+        const currentHistory = historyCacheRef.current[activePair] || [];
+        const newCandles = res.candles;
+        
+        // Deduplicate and merge history
+        const mergedMap = new Map();
+        newCandles.forEach((c: any) => mergedMap.set(c.time, c));
+        currentHistory.forEach((c: any) => mergedMap.set(c.time, c));
+        
+        const mergedHistory = Array.from(mergedMap.values()).sort((a: any, b: any) => a.time - b.time);
+        historyCacheRef.current[activePair] = mergedHistory;
+        
+        if (seriesRef.current) {
+          const currentZoom = chartRef.current ? chartRef.current.timeScale().getVisibleLogicalRange() : null;
+          const pairHist = resampleData(mergedHistory, timeframeRef.current);
+          const uniqueMap = new Map();
+          
+          const isOHLC = chartTypeRef.current === "Candle" || chartTypeRef.current === "Heikin Ashi" || chartTypeRef.current === "Bar";
+          pairHist.forEach((d: any) => {
+              if (isOHLC) {
+                  if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close) && Math.abs(d.high) < 1e12 && Math.abs(d.low) < 1e12 && d.open > 0 && d.close > 0) {
+                      const sanitized = {
+                          ...d,
+                          high: Math.max(d.open, d.high, d.low, d.close),
+                          low: Math.min(d.open, d.high, d.low, d.close)
+                      };
+                      uniqueMap.set(d.time, sanitized);
+                  }
+              } else {
+                  const val = typeof d.value === 'number' ? d.value : d.close;
+                  if (typeof val === 'number' && isFinite(val) && Math.abs(val) < 1e12) {
+                      uniqueMap.set(d.time, { time: d.time, value: val });
+                  }
+              }
+          });
+          
+          const uniqueData = Array.from(uniqueMap.values()).sort((a: any, b: any) => a.time - b.time);
+          
+          const isLine = chartTypeRef.current === "Line" || chartTypeRef.current === "Area" || chartTypeRef.current === "Mountain";
+          const finalData = isLine 
+             ? uniqueData.map((d: any) => ({ time: d.time, value: d.close }))
+             : uniqueData;
+             
+          seriesRef.current.setData(finalData);
+          
+          if (chartRef.current && currentZoom) {
+              const newAddedCount = newCandles.length;
+              try {
+                chartRef.current.timeScale().setVisibleLogicalRange({
+                  from: currentZoom.from + newAddedCount,
+                  to: currentZoom.to + newAddedCount
+                });
+              } catch(e) {}
+          }
+        }
+      } catch (err) {
+        console.error("Failed to process past candles response:", err);
       }
     });
 
@@ -4976,10 +4981,11 @@ const PROMOTED_ARTICLES = [
             const bucketTime = Math.floor(candle.time - (candle.time % timeframeSeconds));
             const lastIdx = baseDataRef.current.length - 1;
             
-            // If the timeframe matches perfectly, we can do a direct authoritative update
+            // If the timeframe matches perfectly, we do a direct authoritative sync on our refs and let RAF handle rendering
             if (isCurrentTf && candle.time === baseDataRef.current[lastIdx].time) {
                 baseDataRef.current[lastIdx] = { ...candle };
-                seriesRef.current.update(baseDataRef.current[lastIdx]);
+                rawLastCandleRef.current = { ...candle };
+                targetPriceRef.current = candle.close;
                 return;
             }
 
@@ -5073,19 +5079,18 @@ const PROMOTED_ARTICLES = [
 
         if (rawLastCandleRef.current.time !== bucketTime && bucketTime > rawLastCandleRef.current.time) {
             const prevClose = rawLastCandleRef.current.close;
-            const timeDiff = bucketTime - Number(rawLastCandleRef.current.time);
-            const isGap = timeDiff > timeframeSeconds * 1.5;
-            const openPrice = isGap ? (tickData.candle?.open ?? newClose) : prevClose;
+            const openPrice = tickData.candle?.open ?? prevClose;
 
-            // Generate a more realistic new candle with subtle variation to avoid "flat" look
-            const variation = openPrice * 0.0001; 
+            const highPrice = Math.max(openPrice, newClose, tickData.candle?.high ?? newClose);
+            const lowPrice = Math.min(openPrice, newClose, tickData.candle?.low ?? newClose);
+
             const newCandle = {
                 time: bucketTime as Time,
                 open: openPrice,
-                high: Math.max(openPrice, newClose) + variation,
-                low: Math.min(openPrice, newClose) - variation,
+                high: highPrice,
+                low: lowPrice,
                 close: newClose,
-                volume: 10 + Math.random() * 90
+                volume: tickData.candle?.volume || (10 + Math.random() * 90)
             };
             rawLastCandleRef.current = newCandle;
             currentInterpolatedPriceRef.current = openPrice;
@@ -5302,7 +5307,7 @@ const PROMOTED_ARTICLES = [
   }, []);
 
   useEffect(() => {
-    if (currentUser && socketRef.current) {
+    if (currentUser?.uid && socketRef.current) {
       console.log("User authentication state loaded/changed, updating socket initial data...");
       socketRef.current.emit('request_initial_data', {
         asset: activeAssetRef.current,
@@ -5311,7 +5316,7 @@ const PROMOTED_ARTICLES = [
         userId: currentUser.uid
       });
     }
-  }, [currentUser, accountType]);
+  }, [currentUser?.uid, accountType]);
 
   const timeframeRef = useRef(timeframe);
   const chartTypeRef = useRef(chartType);
@@ -5401,7 +5406,7 @@ const PROMOTED_ARTICLES = [
         pinch: true,
         axisPressedMouseMove: {
           time: true,
-          price: false,
+          price: true,
         },
       },
       timeScale: {
@@ -5422,7 +5427,7 @@ const PROMOTED_ARTICLES = [
         borderColor: "#1c1f24",
         autoScale: true, 
         alignLabels: true,
-        scaleMargins: { top: 0.38, bottom: 0.15 },
+        scaleMargins: { top: 0.18, bottom: 0.18 },
         entireTextOnly: true, 
         borderVisible: false, 
         ticksVisible: false,
@@ -5436,6 +5441,14 @@ const PROMOTED_ARTICLES = [
       }
     });
     chartRef.current = chart;
+
+    const container = chartContainerRef.current;
+    const handleDblClick = () => {
+      chart.priceScale('right').applyOptions({ autoScale: true });
+    };
+    if (container) {
+      container.addEventListener('dblclick', handleDblClick);
+    }
 
     // Handle scroll back visibility for "Scroll to Real-time" button and infinite history loading
     chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
@@ -5487,6 +5500,9 @@ const PROMOTED_ARTICLES = [
     }
 
     return () => {
+      if (container) {
+        container.removeEventListener('dblclick', handleDblClick);
+      }
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -5520,6 +5536,14 @@ const PROMOTED_ARTICLES = [
       crosshair: {
         mode: CrosshairMode.Normal,
       },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+      },
       timeScale: {
         borderColor: "#1c1f24",
         timeVisible: true,
@@ -5530,17 +5554,73 @@ const PROMOTED_ARTICLES = [
       rightPriceScale: {
         borderColor: "#1c1f24",
         autoScale: true,
-        scaleMargins: { top: 0.38, bottom: 0.15 },
+        alignLabels: true,
+        scaleMargins: { top: 0.18, bottom: 0.18 },
+        entireTextOnly: true,
+        borderVisible: false,
+        ticksVisible: false,
+        visible: true,
       },
     });
 
     chartRef2.current = chart;
+
+    const container = chartContainerRef2.current;
+    const handleDblClick = () => {
+      chart.priceScale('right').applyOptions({ autoScale: true });
+    };
+    if (container) {
+      container.addEventListener('dblclick', handleDblClick);
+    }
+
+    // Calculate dynamic precision based on current price for series2
+    const initialPrice = currentInterpolatedPriceRef.current > 0 ? currentInterpolatedPriceRef.current : 100;
+    let dynamicPrecision = 4;
+    let dynamicMinMove = 0.0001;
+    if (initialPrice >= 1000) {
+        dynamicPrecision = 2;
+        dynamicMinMove = 0.01;
+    } else if (initialPrice >= 100) {
+        dynamicPrecision = 3;
+        dynamicMinMove = 0.001;
+    } else if (initialPrice >= 10) {
+        dynamicPrecision = 4;
+        dynamicMinMove = 0.0001;
+    } else {
+        dynamicPrecision = 5;
+        dynamicMinMove = 0.00001;
+    }
+
     const series = chart.addSeries(CandlestickSeries, {
         upColor: '#00c980',
         downColor: '#ff4757',
         borderVisible: false,
         wickUpColor: '#00c980',
         wickDownColor: '#ff4757',
+        priceFormat: {
+            type: "price",
+            precision: dynamicPrecision,
+            minMove: dynamicMinMove,
+        },
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: "#FFE24C",
+        priceLineStyle: LineStyle.Dotted,
+        priceLineWidth: 1,
+        autoscaleInfoProvider: (original: any) => {
+            const res = original();
+            if (res !== null) {
+                const min = res.priceRange.min;
+                const max = res.priceRange.max;
+                if (min === max) {
+                    const mid = min;
+                    const minRange = Math.max(mid * 0.01, 0.02);
+                    res.priceRange.min = mid - minRange / 2;
+                    res.priceRange.max = mid + minRange / 2;
+                }
+            }
+            return res;
+        }
     });
     seriesRef2.current = series;
 
@@ -5555,6 +5635,9 @@ const PROMOTED_ARTICLES = [
     }
 
     return () => {
+      if (container) {
+        container.removeEventListener('dblclick', handleDblClick);
+      }
       if (chartRef2.current) {
         chartRef2.current.remove();
         chartRef2.current = null;
@@ -5644,8 +5727,8 @@ const PROMOTED_ARTICLES = [
 
         const commonOptions: any = {
       priceFormat: { 
-        type: "custom" as const, 
-        formatter: (price: number) => price.toFixed(dynamicPrecision),
+        type: "price", 
+        precision: dynamicPrecision,
         minMove: dynamicMinMove 
       },
       lastValueVisible: true, 
@@ -5655,6 +5738,20 @@ const PROMOTED_ARTICLES = [
       priceLineStyle: LineStyle.Dotted, 
       priceLineWidth: 1.5,
       baseLineWidth: 1,
+      autoscaleInfoProvider: (original: any) => {
+          const res = original();
+          if (res !== null) {
+              const min = res.priceRange.min;
+              const max = res.priceRange.max;
+              if (min === max) {
+                  const mid = min;
+                  const minRange = Math.max(mid * 0.01, 0.02);
+                  res.priceRange.min = mid - minRange / 2;
+                  res.priceRange.max = mid + minRange / 2;
+              }
+          }
+          return res;
+      }
     };
 
     let series: any;
@@ -5736,12 +5833,18 @@ const PROMOTED_ARTICLES = [
           
           for (const d of initData) {
             if (isOHLC) {
-              if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close)) {
-                  uniqueMap.set(d.time, d);
+              if (typeof d.open === 'number' && typeof d.high === 'number' && typeof d.low === 'number' && typeof d.close === 'number' && isFinite(d.open) && isFinite(d.high) && isFinite(d.low) && isFinite(d.close) && Math.abs(d.high) < 1e12 && Math.abs(d.low) < 1e12 && d.open > 0 && d.close > 0) {
+                  const sanitized = {
+                      ...d,
+                      high: Math.max(d.open, d.high, d.low, d.close),
+                      low: Math.min(d.open, d.high, d.low, d.close)
+                  };
+                  uniqueMap.set(d.time, sanitized);
               }
             } else {
-              if (typeof d.value === 'number' && isFinite(d.value)) {
-                  uniqueMap.set(d.time, d);
+              const val = typeof d.value === 'number' ? d.value : d.close;
+              if (typeof val === 'number' && isFinite(val) && Math.abs(val) < 1e12) {
+                  uniqueMap.set(d.time, { time: d.time, value: val });
               }
             }
           }
@@ -6428,18 +6531,18 @@ const PROMOTED_ARTICLES = [
                   </div>
 
                   {/* Zoom Controls (Mobile) */}
-                  <div className="flex items-center border border-[#3b3c43] rounded-[10px] bg-transparent ml-2 overflow-hidden">
+                  <div className="flex items-center border border-[#3b3c43] rounded-[8px] bg-transparent ml-2 overflow-hidden">
                       <button 
                           onClick={(e) => { e.stopPropagation(); zoomOut(); }} 
-                          className="w-[40px] h-[40px] flex items-center justify-center border-r border-[#3b3c43] text-[#9ea0a5] active:bg-white/5 transition-colors"
+                          className="w-[30px] h-[26px] flex items-center justify-center border-r border-[#3b3c43] text-[#9ea0a5] active:bg-white/5 transition-colors"
                       >
-                          <Minus size={20} strokeWidth={1.8} />
+                          <Minus size={14} strokeWidth={1.2} />
                       </button>
                       <button 
                           onClick={(e) => { e.stopPropagation(); zoomIn(); }} 
-                          className="w-[40px] h-[40px] flex items-center justify-center text-[#9ea0a5] active:bg-white/5 transition-colors"
+                          className="w-[30px] h-[26px] flex items-center justify-center text-[#9ea0a5] active:bg-white/5 transition-colors"
                       >
-                          <Plus size={20} strokeWidth={1.8} />
+                          <Plus size={14} strokeWidth={1.2} />
                       </button>
                   </div>
               </div>
@@ -6636,17 +6739,13 @@ const PROMOTED_ARTICLES = [
                 if (total > 0) {
                   upPercent = Math.round((totalUp / total) * 100);
                 } else {
-                  const timeMs = Date.now();
-                  const price = market?.price || 0;
-                  const priceTick = Math.floor(price * 100000) % 1000; 
+                  const timeSec = Math.floor(Date.now() / 6000);
+                  const assetHash = activeAsset.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                  const slowWave = Math.sin((timeSec + assetHash) / 5) * 6;
                   
-                  // Combine slow wave and fast wave tied to price ticks for live realistic movement
-                  const slowWave = Math.sin(timeMs / 3000) * 12; 
-                  const fastWave = Math.cos(timeMs / 1200 + priceTick) * 8; 
-                  
-                  upPercent = Math.round(50 + slowWave + fastWave);
-                  if (upPercent > 89) upPercent = 89;
-                  if (upPercent < 11) upPercent = 11;
+                  upPercent = Math.round(52 + slowWave);
+                  if (upPercent > 68) upPercent = 68;
+                  if (upPercent < 32) upPercent = 32;
                 }
                 const downPercent = 100 - upPercent;
                 return (
@@ -6789,9 +6888,9 @@ const PROMOTED_ARTICLES = [
               )}
             </div>
 
-            <div className="flex items-center gap-4 ml-2 md:ml-6">
+    <div className="flex items-center gap-4 ml-2 md:ml-6">
               <div className="flex items-center gap-3 group cursor-pointer" onClick={() => window.location.reload()}>
-                <Logo size={24} className="text-[#ffe24c]" />
+                {/* Logo removed per user request for Trade page header */}
                 <span className="hidden lg:block font-sans font-black text-[22px] tracking-tight text-white">Bivox</span>
               </div>
 
@@ -7142,7 +7241,7 @@ const PROMOTED_ARTICLES = [
             {/* MOBILE TOP BAR (Inside Sidebar) */}
             <div className="flex md:hidden h-[64px] items-center justify-between px-6 border-b border-white/5 bg-[#1a1b1f] shrink-0">
                <div className="flex items-center gap-3">
-                  <Logo size={26} />
+                  
                   <span className="text-[22px] font-black tracking-tighter text-white">Bivaax</span>
                </div>
                <button onClick={() => setShowSidebar(false)} className="w-10 h-10 flex items-center justify-center bg-white/5 rounded-full text-gray-400 hover:text-white transition-colors active:scale-95">
@@ -8471,7 +8570,7 @@ const PROMOTED_ARTICLES = [
       )}
       {/* TRADES HISTORY DRAWER */}
       {activeTab === "history" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-full md:w-[50vw] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
           <div className="w-full h-full flex flex-col relative text-white z-50">
             {/* Top Header */}
             <div className="h-[64px] flex items-center justify-between px-6 border-b border-white/5 bg-[#121214] shrink-0">
@@ -12662,11 +12761,11 @@ const PROMOTED_ARTICLES = [
              className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
           />
           <motion.div 
-            initial={{ x: -400 }}
+            initial={{ x: "-100%" }}
             animate={{ x: 0 }}
-            exit={{ x: -400 }}
+            exit={{ x: "-100%" }}
             transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-[85%] md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
+            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
           >
             {/* Top Header */}
             <div className="pt-[18px] pb-4 px-5 flex items-center justify-between border-b border-[#2C2D33]/40">
@@ -12725,11 +12824,11 @@ const PROMOTED_ARTICLES = [
              className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
           />
           <motion.div 
-            initial={{ x: -400 }}
+            initial={{ x: "-100%" }}
             animate={{ x: 0 }}
-            exit={{ x: -400 }}
+            exit={{ x: "-100%" }}
             transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-[85%] md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
+            className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[50vw] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
           >
             {/* Top Header */}
             <div className="pt-6 pb-2 px-6 flex items-center justify-between border-b border-[#2C2D33]/40">
@@ -13433,6 +13532,13 @@ const PROMOTED_ARTICLES = [
                  <div key={`msg-${idx}`} className={`flex ${isStaff ? 'justify-start' : 'justify-end'}`}>
                     <div className={`${isStaff ? 'bg-[#f3f4f6] text-[#333] rounded-tl-none border border-gray-100' : 'bg-[#333] text-white rounded-tr-none shadow-md'} rounded-2xl p-4 max-w-[85%]`}>
                        <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                       {msg.attachments && msg.attachments.length > 0 && (
+                         <div className="mt-2 flex flex-wrap gap-2">
+                            {msg.attachments.map((att: string, aIdx: number) => (
+                              <img key={aIdx} src={att} alt="attachment" className="w-24 h-24 object-cover rounded-lg border border-white/20" />
+                            ))}
+                         </div>
+                       )}
                        <div className={`mt-2 flex items-center gap-2 ${isStaff ? 'text-gray-400' : 'text-white/40'}`}>
                           <span className="text-[9px] font-black uppercase tracking-widest">{isStaff ? 'Bot' : 'You'}</span>
                           <span className="text-[9px] font-bold">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -13454,8 +13560,36 @@ const PROMOTED_ARTICLES = [
               )}
           </div>
 
+          {/* Attached Files Preview */}
+          {ticketAttachedFiles.length > 0 && (
+            <div className="bg-white px-4 pt-2 flex items-center gap-2 overflow-x-auto">
+              {ticketAttachedFiles.map((file, i) => (
+                <div key={i} className="relative group shrink-0">
+                  <img src={file} alt="preview" className="w-12 h-12 rounded-xl object-cover border border-gray-200" />
+                  <button
+                    onClick={() => setTicketAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="p-4 bg-white border-t border-gray-100 flex items-center gap-3">
-             <button className="text-gray-400 hover:text-gray-600 transition-colors p-2">
+             <input
+                type="file"
+                ref={ticketFileInputRef}
+                onChange={handleTicketFileUpload}
+                accept="image/*,.pdf"
+                className="hidden"
+             />
+             <button 
+                onClick={() => ticketFileInputRef.current?.click()}
+                className="text-gray-400 hover:text-gray-600 transition-colors p-2"
+                title="Attach Document or Screenshot"
+             >
                 <Paperclip size={22} strokeWidth={2.5} />
              </button>
              <div className="flex-1 relative">
@@ -13469,8 +13603,8 @@ const PROMOTED_ARTICLES = [
              </div>
              <button 
                 onClick={sendTicketMessage}
-                disabled={!ticketReply.trim()}
-                className={`p-2 transition-all ${ticketReply.trim() ? 'text-[#0091ff] scale-110' : 'text-gray-300'}`}
+                disabled={!ticketReply.trim() && ticketAttachedFiles.length === 0}
+                className={`p-2 transition-all ${(ticketReply.trim() || ticketAttachedFiles.length > 0) ? 'text-[#0091ff] scale-110' : 'text-gray-300'}`}
              >
                 <Send size={22} strokeWidth={2.5} />
              </button>
@@ -13478,17 +13612,7 @@ const PROMOTED_ARTICLES = [
         </div>
       )}
 
-      {/* Floating Close Button - Bottom Left Matched to Screenshot */}
-      {activeTab === "support-detail" && (
-        <div className="fixed bottom-10 left-10 z-[600]">
-           <button 
-             onClick={() => { setActiveTab("trade"); setSelectedTicket(null); }}
-             className="w-[52px] h-[52px] bg-[#f45c5c] rounded-full flex items-center justify-center text-white shadow-2xl hover:scale-110 active:scale-90 transition-all border-4 border-white/10"
-           >
-              <X size={28} strokeWidth={3} />
-           </button>
-        </div>
-      )}
+
       {isCreatingTicket && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-250">
            <motion.div 
@@ -13694,11 +13818,11 @@ const PROMOTED_ARTICLES = [
                className="fixed md:absolute inset-0 bg-black/50 md:bg-transparent z-[140] md:pointer-events-none"
             />
             <motion.div
-              initial={{ x: -400 }}
+              initial={{ x: "-100%" }}
               animate={{ x: 0 }}
-              exit={{ x: -400 }}
+              exit={{ x: "-100%" }}
               transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
-              className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-[85%] md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
+              className="fixed md:absolute left-0 md:left-[76px] top-0 bottom-0 w-full md:w-[360px] z-[150] flex flex-col bg-[#222329] border-r border-[#2C2D33] shadow-2xl overflow-hidden pointer-events-auto"
             >
               {/* Top Header */}
               <div className="pt-[18px] pb-4 px-5 flex items-center justify-between border-b border-[#2C2D33]/40">
@@ -14936,6 +15060,7 @@ const PROMOTED_ARTICLES = [
             </div>
         </div>
       )}
+      <SupportChatWidget currentUser={auth.currentUser ? { uid: auth.currentUser.uid, email: auth.currentUser.email || "", displayName: auth.currentUser.displayName || "" } : null} />
     </div>
     </>
   );

@@ -12,26 +12,25 @@ import { SupportProvider } from './context/SupportContext';
 import AppBoundary from './components/AppBoundary';
 import SupportWidget from './components/SupportWidget';
 
-// Lazy loading pages for improved performance
-const DocsPage = lazy(() => import('./pages/DocsPage'));
-const ProfilePage = lazy(() => import('./pages/Profile'));
-const AffiliatePage = lazy(() => import('./pages/Affiliate'));
-const Homepage = lazy(() => import('./pages/Homepage'));
-const TradeTerminal = lazy(() => import('./pages/TradeTerminal'));
-const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
-const SignalsPage = lazy(() => import('./pages/Signals'));
-const CopyTradingPage = lazy(() => import('./pages/CopyTrading'));
-const StaticPage = lazy(() => import('./pages/StaticPage'));
-const AboutUsPage = lazy(() => import('./pages/AboutUs'));
-const BinancePayPage = lazy(() => import('./pages/BinancePayPage'));
-const CryptoDepositPage = lazy(() => import('./pages/CryptoDepositPage'));
-const MFSDepositPage = lazy(() => import('./pages/MFSDepositPage'));
-const BkashDeposit = lazy(() => import('./pages/BkashDeposit'));
-const NagadDeposit = lazy(() => import('./pages/NagadDeposit'));
-const RocketDeposit = lazy(() => import('./pages/RocketDeposit'));
-const GoPayDepositPage = lazy(() => import('./pages/GoPayDepositPage'));
-const AuthPage = lazy(() => import('./pages/AuthPage'));
-const AffiliateLandingPage = lazy(() => import('./pages/AffiliateLanding'));
+import DocsPage from './pages/DocsPage';
+import ProfilePage from './pages/Profile';
+import AffiliatePage from './pages/Affiliate';
+import Homepage from './pages/Homepage';
+import TradeTerminal from './pages/TradeTerminal';
+import AdminDashboard from './pages/AdminDashboard';
+import SignalsPage from './pages/Signals';
+import CopyTradingPage from './pages/CopyTrading';
+import StaticPage from './pages/StaticPage';
+import AboutUsPage from './pages/AboutUs';
+import BinancePayPage from './pages/BinancePayPage';
+import CryptoDepositPage from './pages/CryptoDepositPage';
+import MFSDepositPage from './pages/MFSDepositPage';
+import BkashDeposit from './pages/BkashDeposit';
+import NagadDeposit from './pages/NagadDeposit';
+import RocketDeposit from './pages/RocketDeposit';
+import GoPayDepositPage from './pages/GoPayDepositPage';
+import AuthPage from './pages/AuthPage';
+import AffiliateLandingPage from './pages/AffiliateLanding';
 
 // Loader for Suspense
 const PageLoader = () => (

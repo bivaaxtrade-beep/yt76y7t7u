@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { verifyToken } from '../lib/auth-server.ts';
 import { history_real, history_demo, currentCandles_real, currentCandles_demo, markets_real, markets_demo, systemActive } from './marketService.ts';
-import { get } from '../db/mysql-db.ts';
+import { get, run, query } from '../db/mysql-db.ts';
 import { mapUserForFrontend } from '../lib/user-utils.ts';
 
 function getTimeSeconds(tf: string): number {
@@ -48,10 +48,43 @@ export function initSocket(server: HttpServer) {
         if (decoded) {
           socket.data.userId = decoded.uid;
           socket.join(`user_${decoded.uid}`);
-          console.log(`User ${decoded.uid} authenticated on socket ${socket.id}`);
+          if (decoded.is_admin || decoded.role === 'admin' || decoded.role === 'support' || decoded.role === 'supervisor') {
+            socket.join('agents_room');
+          }
+          console.log(`User/Agent ${decoded.uid} authenticated on socket ${socket.id}`);
         }
       } catch (err) {
         console.error('Socket authentication failed:', err);
+      }
+    });
+
+    // Support Chat Rooms & Real-time Events
+    socket.on('join_ticket', (ticketId: string) => {
+      if (ticketId) {
+        socket.join(`ticket_${ticketId}`);
+      }
+    });
+
+    socket.on('leave_ticket', (ticketId: string) => {
+      if (ticketId) {
+        socket.leave(`ticket_${ticketId}`);
+      }
+    });
+
+    socket.on('typing', ({ ticketId, senderType, isTyping }) => {
+      if (ticketId) {
+        socket.to(`ticket_${ticketId}`).emit('typing', { senderType, isTyping });
+      }
+    });
+
+    socket.on('message_status', async ({ ticketId, messageId, status }) => {
+      if (ticketId && messageId) {
+        if (status === 'seen') {
+          try {
+            await run('UPDATE ticket_messages SET is_read = 1 WHERE id = ?', [messageId]);
+          } catch (err) {}
+        }
+        socket.to(`ticket_${ticketId}`).emit('message_status', { messageId, status });
       }
     });
 
@@ -106,6 +139,44 @@ export function initSocket(server: HttpServer) {
         if (user) {
           socket.emit('user_profile_update', mapUserForFrontend(user));
         }
+      }
+    });
+
+    socket.on('request_past_candles', async (params: { asset: string, accountType: 'real' | 'demo', timeframe: string, beforeTime: number, limit?: number }) => {
+      const { asset, accountType, timeframe, beforeTime, limit = 1000 } = params;
+      try {
+        const rows = await query(`
+          SELECT openTime as time, open, high, low, close, volume, openTime, closeTime
+          FROM historical_candles
+          WHERE market = ? AND type = ? AND timeframe = ? AND openTime < ?
+          ORDER BY openTime DESC
+          LIMIT ?
+        `, [asset, accountType, timeframe, beforeTime, limit]);
+
+        const formattedRows = rows.map((r: any) => ({
+          time: r.time,
+          open: parseFloat(r.open) || 0,
+          high: parseFloat(r.high) || 0,
+          low: parseFloat(r.low) || 0,
+          close: parseFloat(r.close) || 0,
+          volume: parseFloat(r.volume) || 0,
+          openTime: r.openTime,
+          closeTime: r.closeTime
+        })).reverse();
+
+        socket.emit('past_candles_response', {
+          asset,
+          timeframe,
+          candles: formattedRows
+        });
+      } catch (err) {
+        console.error('Failed to fetch past candles:', err);
+        socket.emit('past_candles_response', {
+          asset,
+          timeframe,
+          candles: [],
+          error: 'Failed to fetch historical candles'
+        });
       }
     });
 

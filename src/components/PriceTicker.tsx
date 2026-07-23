@@ -61,7 +61,7 @@ export const PriceTicker: React.FC = () => {
               className="flex items-center gap-10 whitespace-nowrap"
               animate={{ x: ["0%", "-50%"] }}
               transition={{ 
-                duration: 30, 
+                duration: 150, 
                 repeat: Infinity, 
                 ease: "linear" 
               }}

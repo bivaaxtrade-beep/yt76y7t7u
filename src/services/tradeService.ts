@@ -110,8 +110,8 @@ export async function settleTrade(tradeId: number, currentMarketPrice?: number) 
 
       // Update trade
       await run(
-        'UPDATE trades SET status = ?, exit_price = ?, payout_amount = ?, settled_at = datetime(\'now\') WHERE id = ?',
-        [newStatus, exitPrice.toString(), payoutAmount.toString(), tradeId],
+        'UPDATE trades SET status = ?, exit_price = ?, payout_amount = ?, settled_at = ? WHERE id = ?',
+        [newStatus, exitPrice.toString(), payoutAmount.toString(), Math.floor(Date.now() / 1000), tradeId],
         conn
       );
 
