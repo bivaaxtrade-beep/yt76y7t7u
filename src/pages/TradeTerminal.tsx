@@ -1751,6 +1751,16 @@ export default function TradeTerminal() {
     }
   }, [navigate, location.pathname]);
 
+  useEffect(() => {
+    if (activeTab === "activities") {
+      setIsActivitiesLoading(true);
+      const timer = setTimeout(() => {
+        setIsActivitiesLoading(false);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab]);
+
   const [calcAmount, setCalcAmount] = useState<number>(50);
   const [calcPayout, setCalcPayout] = useState<number>(82);
 
@@ -6410,7 +6420,7 @@ const PROMOTED_ARTICLES = [
 
 
           {/* Chart Floating Tools - Professional Screenshot-Matched UI */}
-          <div className="absolute bottom-[20px] left-5 right-5 flex items-center justify-between z-30 pointer-events-none">
+          <div className="absolute bottom-[46px] md:bottom-[20px] left-[10px] md:left-5 right-[10px] md:right-5 flex items-center justify-between z-30 pointer-events-none">
               
               {/* Desktop: Support Button & Chart Controls Row */}
               <div className="hidden md:flex items-center gap-4 pointer-events-auto">
@@ -7389,7 +7399,7 @@ const PROMOTED_ARTICLES = [
 
       {/* ACTIVITIES DRAWER */}
       {activeTab === "activities" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-full max-w-full md:max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#121214] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
           <div className="w-full h-full flex flex-col relative text-white z-50">
             {/* Top Header */}
             <div className="h-[64px] flex items-center justify-between px-6 border-b border-white/5 bg-[#121214] shrink-0">
@@ -7414,97 +7424,152 @@ const PROMOTED_ARTICLES = [
 
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto px-6 py-6 bg-[#0B0B0C] relative custom-scrollbar">
-              {/* Stories Horizontal Scroll */}
-              <div className="relative group/stories mb-6 border-b border-white/5 pb-6">
-                <div id="stories-scroll" className="flex overflow-x-auto gap-3 scrollbar-hide -mx-2 px-2 shrink-0">
-                  {STORIES.map((story, index) => (
-                    <button
-                      key={story.id}
-                      onClick={() => {
-                        setSelectedStoryIndex(index);
-                        setShowStory(true);
-                      }}
-                      className="flex flex-col items-center min-w-[100px] w-[100px] h-[130px] rounded-xl overflow-hidden relative group cursor-pointer border border-white/5 shadow-xl hover:border-[#FFE24C]/30 transition-all shrink-0"
-                    >
-                      <img src={story.imageUrl} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"  loading="lazy" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
-                      <div className="absolute bottom-2 left-2 right-2 text-left">
-                        <span className="text-[11px] font-black uppercase text-white leading-[1.1] tracking-tighter line-clamp-2 drop-shadow-md">
-                          {story.title}
-                        </span>
+              {isActivitiesLoading ? (
+                <div className="animate-pulse space-y-6">
+                  {/* Stories Horizontal Scroll Skeleton */}
+                  <div className="flex overflow-x-auto gap-3 pb-6 border-b border-white/5 scrollbar-hide">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={`story-skeleton-${i}`}
+                        className="min-w-[100px] w-[100px] h-[130px] rounded-xl bg-[#2a2c31]/60 flex flex-col justify-end p-3 border border-white/5 shrink-0"
+                      >
+                        <div className="w-12 h-3 bg-white/10 rounded-sm mb-1.5" />
+                        <div className="w-16 h-3 bg-white/10 rounded-sm" />
                       </div>
-                    </button>
-                  ))}
-                </div>
-                
-                {/* Scroll Indicator/Button */}
-                <button 
-                  onClick={() => {
-                    document.getElementById('stories-scroll')?.scrollBy({ left: 150, behavior: 'smooth' });
-                  }}
-                  className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 w-8 h-8 rounded-full bg-[#2a2c31] border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-[#32343a] shadow-xl z-10 transition-all opacity-0 group-hover/stories:opacity-100"
-                >
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {/* Tournaments (Large Card) */}
-                <button 
-                  onClick={() => setActiveTab("tournaments")}
-                  className="w-full bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-5 flex items-center gap-5 transition-all border border-white/5 shadow-lg group h-[100px]"
-                >
-                  <div className="w-14 h-14 rounded-xl bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
-                    <Trophy size={28} className="text-white" />
+                    ))}
                   </div>
-                  <span className="text-[18px] font-black text-white tracking-tight">Tournaments</span>
-                </button>
 
-                {/* 3 Square Grid Items */}
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label: "Bonuses", tab: "promotions", icon: Gift, count: "2" },
-                    { label: "Calendar", tab: "calendar", icon: Calendar },
-                    { label: "Top-20", tab: "top-20", icon: Icons.Award, hasDot: true },
-                  ].map((item) => (
-                    <button 
-                      key={`activities-grid-${item.label}`}
-                      onClick={() => setActiveTab(item.tab as any)}
-                      className="bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-3 flex flex-col items-center gap-3 transition-all border border-white/5 shadow-lg h-[110px] justify-center relative group"
-                    >
-                      <div className="w-12 h-12 rounded-xl bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
-                        <item.icon size={24} className="text-white" />
-                      </div>
-                      <span className="text-[12px] font-bold text-white/90">{item.label}</span>
-                      {item.count && <div className="absolute top-3 right-3 w-4 h-4 bg-[#ff4757] rounded-full flex items-center justify-center text-[9px] font-black">{item.count}</div>}
-                      {item.hasDot && <div className="absolute top-3 right-3 w-2 h-2 bg-[#ff4757] rounded-full"></div>}
-                    </button>
-                  ))}
-                </div>
+                  <div className="space-y-4">
+                    {/* Tournaments Skeleton */}
+                    <div className="w-full bg-[#2a2c31]/60 rounded-2xl p-5 flex items-center gap-5 border border-white/5 h-[100px]">
+                      <div className="w-14 h-14 rounded-xl bg-white/5 border border-white/5 shrink-0" />
+                      <div className="w-32 h-6 bg-white/10 rounded-md" />
+                    </div>
 
-                {/* Vertical List Items */}
-                <div className="space-y-3">
-                  {[
-                    { label: "What's new?", tab: "news", icon: Megaphone, badge: "9+" },
-                    { label: "Invite Friends", tab: "affiliate", icon: UserPlus },
-                    { label: "Education", tab: "education", icon: GraduationCap },
-                  ].map((item) => (
-                    <button 
-                      key={`activities-list-${item.label}`}
-                      onClick={() => setActiveTab(item.tab as any)}
-                      className="w-full bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-4 flex items-center justify-between transition-all border border-white/5 shadow-lg h-[80px] group"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
-                          <item.icon size={22} className="text-white" />
+                    {/* 3 Square Grid Items Skeleton */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[1, 2, 3].map((i) => (
+                        <div
+                          key={`grid-skeleton-${i}`}
+                          className="bg-[#2a2c31]/60 rounded-2xl p-3 flex flex-col items-center gap-3 border border-white/5 h-[110px] justify-center"
+                        >
+                          <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/5 shrink-0" />
+                          <div className="w-12 h-4 bg-white/10 rounded-md" />
                         </div>
-                        <span className="text-[16px] font-bold text-white/90">{item.label}</span>
-                      </div>
-                      {item.badge && <div className="bg-[#ff4757] text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{item.badge}</div>}
-                    </button>
-                  ))}
+                      ))}
+                    </div>
+
+                    {/* Vertical List Items Skeleton */}
+                    <div className="space-y-3">
+                      {[1, 2, 3].map((i) => (
+                        <div
+                          key={`list-skeleton-${i}`}
+                          className="w-full bg-[#2a2c31]/60 rounded-2xl p-4 flex items-center justify-between border border-white/5 h-[80px]"
+                        >
+                          <div className="flex items-center gap-4 w-full">
+                            <div className="w-12 h-12 rounded-full bg-white/5 border border-white/5 shrink-0" />
+                            <div className="w-24 h-5 bg-white/10 rounded-md" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  {/* Stories Horizontal Scroll */}
+                  <div className="relative group/stories mb-6 border-b border-white/5 pb-6">
+                    <div id="stories-scroll" className="flex overflow-x-auto gap-3 scrollbar-hide -mx-2 px-2 shrink-0">
+                      {STORIES.map((story, index) => (
+                        <button
+                          key={story.id}
+                          onClick={() => {
+                            setSelectedStoryIndex(index);
+                            setShowStory(true);
+                          }}
+                          className="flex flex-col items-center min-w-[100px] w-[100px] h-[130px] rounded-xl overflow-hidden relative group cursor-pointer border border-white/5 shadow-xl hover:border-[#FFE24C]/30 transition-all shrink-0"
+                        >
+                          <img src={story.imageUrl} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"  loading="lazy" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent"></div>
+                          <div className="absolute bottom-2 left-2 right-2 text-left">
+                            <span className="text-[11px] font-black uppercase text-white leading-[1.1] tracking-tighter line-clamp-2 drop-shadow-md">
+                              {story.title}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    
+                    {/* Scroll Indicator/Button */}
+                    <button 
+                      onClick={() => {
+                        document.getElementById('stories-scroll')?.scrollBy({ left: 150, behavior: 'smooth' });
+                      }}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-3 w-8 h-8 rounded-full bg-[#2a2c31] border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-[#32343a] shadow-xl z-10 transition-all opacity-0 group-hover/stories:opacity-100"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Tournaments (Large Card) */}
+                    <button 
+                      onClick={() => setActiveTab("tournaments")}
+                      className="w-full bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-5 flex items-center gap-5 transition-all border border-white/5 shadow-lg group h-[100px]"
+                    >
+                      <div className="w-14 h-14 rounded-xl bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
+                        <Trophy size={28} className="text-white" />
+                      </div>
+                      <span className="text-[18px] font-black text-white tracking-tight">Tournaments</span>
+                    </button>
+
+                    {/* 3 Square Grid Items */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: "Bonuses", tab: "promotions", icon: Gift, count: "2" },
+                        { label: "Calendar", tab: "calendar", icon: Calendar },
+                        { label: "Top-20", tab: "top-20", icon: Icons.Award, hasDot: true },
+                      ].map((item) => (
+                        <button 
+                          key={`activities-grid-${item.label}`}
+                          onClick={() => setActiveTab(item.tab as any)}
+                          className="bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-3 flex flex-col items-center gap-3 transition-all border border-white/5 shadow-lg h-[110px] justify-center relative group"
+                        >
+                          <div className="w-12 h-12 rounded-xl bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
+                            <item.icon size={24} className="text-white" />
+                          </div>
+                          <span className="text-[12px] font-bold text-white/90">{item.label}</span>
+                          {item.count && <div className="absolute top-3 right-3 w-4 h-4 bg-[#ff4757] rounded-full flex items-center justify-center text-[9px] font-black">{item.count}</div>}
+                          {item.hasDot && <div className="absolute top-3 right-3 w-2 h-2 bg-[#ff4757] rounded-full"></div>}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Vertical List Items */}
+                    <div className="space-y-3">
+                      {[
+                        { label: "What's new?", tab: "news", icon: Megaphone, badge: "9+" },
+                        { label: "Invite Friends", tab: "affiliate", icon: UserPlus },
+                        { label: "Education", tab: "education", icon: GraduationCap },
+                      ].map((item) => (
+                        <button 
+                          key={`activities-list-${item.label}`}
+                          onClick={() => setActiveTab(item.tab as any)}
+                          className="w-full bg-[#2a2c31] hover:bg-[#32343a] rounded-2xl p-4 flex items-center justify-between transition-all border border-white/5 shadow-lg h-[80px] group"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-full bg-[#1f2026] flex items-center justify-center border border-white/5 group-hover:scale-105 transition-transform">
+                              <item.icon size={22} className="text-white" />
+                            </div>
+                            <span className="text-[16px] font-bold text-white/90">{item.label}</span>
+                          </div>
+                          {item.badge && <div className="bg-[#ff4757] text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{item.badge}</div>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -8473,7 +8538,7 @@ const PROMOTED_ARTICLES = [
 
       {/* TOURNAMENTS DRAWER */}
       {activeTab === "tournaments" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-full max-w-full md:max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
            {/* Header */}
            <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
               <h2 className="text-lg font-black tracking-tight uppercase">Tournaments</h2>
@@ -8551,7 +8616,7 @@ const PROMOTED_ARTICLES = [
 
       {/* COPY TRADING DRAWER */}
       {activeTab === "copytrading" && (
-        <div className="fixed md:absolute inset-y-0 left-0 w-[85vw] max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
+        <div className="fixed md:absolute inset-y-0 left-0 w-full max-w-full md:max-w-[400px] md:left-[68px] md:right-auto md:w-[400px] z-[150] flex flex-col overflow-hidden bg-[#1f2026] border-r border-white/5 shadow-2xl animate-in slide-in-from-left duration-300">
            {/* Header */}
            <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0 bg-[#1f2026] z-[210]">
               <h2 className="text-lg font-black tracking-tight uppercase">Copy Trading</h2>
