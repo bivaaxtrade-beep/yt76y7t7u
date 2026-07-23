@@ -197,7 +197,6 @@ export async function initializeCandlesFromDB() {
             runTx(oldCandles);
           } else {
             // Seed brand new initial 5s candles (200 candles to provide background efficiently)
-            console.log(`🌱 Seeding initial 5-second candles for ${pair} (${type})...`);
             const basePrice = markets[pair].price || 100;
             let volatility = markets[pair].volatility || 0.0002;
             // Always convert absolute volatility to relative volatility
@@ -269,14 +268,11 @@ export async function initializeCandlesFromDB() {
 
         // B. Generate / Seeding for all OTHER timeframes by resampling the 5s base candles
         for (const tf of TIMEFRAMES) {
-          // Yield to prevent event loop blocking
-          await new Promise(resolve => setImmediate(resolve));
           if (tf === '5 seconds') continue;
           const tfCountResult = db.prepare('SELECT COUNT(*) as count FROM historical_candles WHERE market = ? AND type = ? AND timeframe = ?').get(pair, type, tf) as any;
           const tfCount = tfCountResult ? tfCountResult.count : 0;
           
           if (tfCount === 0) {
-            console.log(`🌱 Generating & Seeding historical candles for ${pair} (${type}) timeframe: ${tf}...`);
             const baseCandles = db.prepare('SELECT open, high, low, close, volume, openTime, closeTime FROM historical_candles WHERE market = ? AND type = ? AND timeframe = ? ORDER BY openTime ASC').all(pair, type, '5 seconds') as any[];
             const resampled = resampleCandles(baseCandles, timeframeSecondsMap[tf]);
             
@@ -308,8 +304,6 @@ export async function initializeCandlesFromDB() {
 
         // C. Gap-filling & Memory loading for EVERY timeframe
         for (const tf of TIMEFRAMES) {
-          // Yield to prevent event loop blocking
-          await new Promise(resolve => setImmediate(resolve));
           const tfSeconds = timeframeSecondsMap[tf];
           const latestCandle = db.prepare('SELECT close, openTime, closeTime FROM historical_candles WHERE market = ? AND type = ? AND timeframe = ? ORDER BY openTime DESC LIMIT 1').get(pair, type, tf) as any;
           
@@ -439,10 +433,6 @@ export async function initializeCandlesFromDB() {
                   markets_demo[pair].price = lastGap.close;
                 }
               }
-            }
-            
-            if (totalFilled > 0) {
-              console.log(`🌱 Gap-filled ${totalFilled} candles for ${pair} (${type}) timeframe: ${tf} at startup`);
             }
           }
 
