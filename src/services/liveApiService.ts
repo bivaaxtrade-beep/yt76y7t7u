@@ -10,6 +10,7 @@ import { markets } from '../markets.ts';
  */
 class LiveApiService {
   private binanceWs: WebSocket | null = null;
+  private binanceBlocked = false;
   private pairsToBinance: Record<string, string> = {
     'BTC/USD': 'btcusdt',
     'ETH/USD': 'ethusdt',
@@ -43,6 +44,10 @@ class LiveApiService {
   }
 
   private connectBinance() {
+    if (this.binanceBlocked) {
+      return;
+    }
+
     const symbols = Object.values(this.pairsToBinance);
     const streams = symbols.map(s => `${s}@ticker`).join('/');
     const url = `wss://stream.binance.com:9443/ws/${streams}`;
@@ -58,8 +63,6 @@ class LiveApiService {
     this.binanceWs.on('message', (data: string) => {
       try {
         const msg = JSON.parse(data);
-        // Ticker message can be single or from a combined stream
-        // Combined stream format: { stream: '...', data: { ... } }
         const ticker = msg.data || msg;
         if (ticker.e !== '24hrTicker') return;
 
@@ -80,21 +83,20 @@ class LiveApiService {
       }
     });
 
-    let isBlocked = false;
-
     this.binanceWs.on('error', (err) => {
-      console.warn('❌ Binance WebSocket Error:', err.message);
       if (err.message?.includes('451')) {
-        isBlocked = true;
+        this.binanceBlocked = true;
+        console.warn('ℹ️ Binance API is geographically restricted (HTTP 451) on this hosting server region. Internal real-time market engine active for all assets.');
+      } else {
+        console.warn('❌ Binance WebSocket Error:', err.message);
       }
     });
 
     this.binanceWs.on('close', () => {
-      const delay = isBlocked ? 60000 : 5000;
-      if (isBlocked) {
-        console.warn('ℹ️ Binance API geographically restricted (HTTP 451) on current hosting server region. Internal real-time market engine active.');
+      if (!this.binanceBlocked) {
+        console.log('⚠️ Binance WebSocket closed. Reconnecting in 5s...');
+        setTimeout(() => this.connectBinance(), 5000);
       }
-      setTimeout(() => this.connectBinance(), delay);
     });
   }
 }
