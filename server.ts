@@ -29,8 +29,12 @@ import logger from './src/lib/logger';
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   const httpServer = createServer(app);
+
+  // Health check endpoints for Railway / hosting platforms
+  app.get('/health', (req, res) => { res.status(200).send('OK'); });
+  app.get('/api/health', (req, res) => { res.status(200).json({ status: 'ok' }); });
 
   // Security Middlewares
   app.use(helmet({
